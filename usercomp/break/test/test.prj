@@ -1,0 +1,62 @@
+; ************************************************************
+; PROJECT: Test of the signal delay component
+; AUTHOR: Wojciech Stryjewski
+; ************************************************************
+
+; Micro + software running
+; ------------------------------------------------------------
+.MICRO "ATmega8"
+.PROGRAM "test.asm"
+.TARGET "test.hex"
+
+; Following lines are optional; if not included
+; exactly these values are taken by default
+; ------------------------------------------------------------
+.POWER VDD=5 VSS=0  ; Power nodes
+.CLOCK 16meg        ; Micro clock
+.STORE 250m         ; Trace (micro+signals) storage time
+
+; Micro nodes: RESET, AREF, PB0-PB7, PC0-PC6, PD0-PD7, ACO, TIM1OVF, ADC6, ADC7
+; Define here the hardware around the micro
+; ------------------------------------------------------------
+
+; To use this component, use the following component definition:
+;
+; X _break(<Delay>) <TRIGGER> <CANCEL>
+;
+; A breakpoint will occur on every rising edge of the <TRIGGER> pin. If the
+; <Delay> argument is zero, then the breakpoint occurs immediately during the
+; same time step as the rising edge. If the <Delay> argument is non zero, then
+; a rising <TRIGGER> edge schedules a future breakpoint to occur <Delay>
+; seconds after the rising edge was detected. Once a future breakpoint is
+; scheduled in this manner, any further rising edges on <TRIGGER> are ignored
+; and will not schedule additional breakpoints, until the original breakpoint
+; is hit. Once the simulation is resumed, the <TRIGGER> pin will once again be
+; monitored for rising edges.
+;
+; For normal operation as described above, the <CANCEL> pin must remain low.
+; However, if the <CANCEL> pin becomes high, then any pending breakpoints (in
+; case <Delay> is non zero) are cancelled. In addition, as long as <CANCEL>
+; remains high, any further rising edges on <TRIGGER> will be ignored until the
+; <CANCEL> pin goes low again.
+
+; Test pattern to trigger breakpoints on rising edges
+P NRZ(100u) TRIGGER RESET "00010000100"
+
+; Pattern applied to cancel pin masking the breakpoints
+P NRZ(100u) CANCEL RESET  "00000000010"
+
+; Fixed breakpoint time at 200us from simulation start
+Xfixed200u _break(200u) VDD GND
+
+; Normal breakpoint on rising edge with no delays
+Xnodelay _break(0) TRIGGER GND
+
+; Delayed breakpoint by 200us and masked by the cancel pin
+Xdelay200u _break(200u) TRIGGER CANCEL
+
+; Plot the trigger and cancel signals
+.PLOT V(TRIGGER) V(CANCEL)
+
+
+

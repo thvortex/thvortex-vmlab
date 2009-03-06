@@ -1,0 +1,84 @@
+; ************************************************************
+; PROJECT: Using comxch components to make a null-modem
+; AUTHOR: Wojciech Stryjewski
+; ************************************************************
+
+; ************************************************************
+; To run this, you must do the following in order:
+;
+; 1. Install the com0com driver and create a CNCA0/CNCB0
+;    pair of loopback virtual ports.
+;    See http://com0com.sourceforge.net/
+; 2. Run the "Setup" utility form the "com0com" Start Menu
+;    folder and create a second CNCA1/CNCB1 port pair.
+; 3. Start HyperTerminal (Start Menu -> Accessories ->
+;    Communications) and open CNCA0. The baud, data bits, etc
+;    settings are not important for the virtual ports.
+; 4. Start a second HyperTerminal and open CNCA1.
+; 5. Start the simulation of this file in VMLAB
+; 6. Try typing in one of the HyperTerminal windows. The text
+;    should appear in one of the RX windows in the VMLAB
+;    Control Panel AND in the OTHER HyperTerminal window.
+;    Note that the text will not appear in the HyperTerminal
+;    window that you type in because local echo is off by
+;    default.
+; 7. Try typing in the other HyperTerminal now. The same
+;    thing should happen as in step 6 but with the opposite
+;    windows.
+; 8. Try typing text into the TX window of either TTY in the
+;    control panel. Text should appear in either of the
+;    HyperTerminal windows.
+;
+; NOTE: By default the com0com driver will block any application
+; using a virtual port until another application opens the
+; other end of that port. If any application appears to freeze
+; when you start typing, ensure that the VMLAB simulation is
+; actively running (the "Time:" display on the right of the VMLAB
+; window status bar should be changing) and that both of the
+; HyperTerminals are also connected (the left of the status bar
+; in the HyperTerminal windows should display "Connected").
+; ************************************************************
+
+; Micro + software running
+; ------------------------------------------------------------
+.MICRO "ATmega8"
+.PROGRAM "test.asm"
+.TARGET "test.hex"
+
+; Following lines are optional; if not included
+; exactly these values are taken by default
+; ------------------------------------------------------------
+.POWER VDD=5 VSS=0  ; Power nodes
+.CLOCK 1meg         ; Micro clock
+
+; Micro nodes: RESET, AREF, PB0-PB7, PC0-PC6, PD0-PD7, ACO, TIM1OVF, ADC6, ADC7
+; Define here the hardware around the micro
+; ------------------------------------------------------------
+
+; The two comxch components that form a virtual null-modem
+Xcncb0 _comxch(9600 8 1 0 1) tx0 rx0
+Xcncb1 _comxch(9600 8 1 0 1) tx1 rx1
+
+; Monitor the input from each serial port and allow the tty
+; components to inject data directly into either port
+Xport0 TTY(9600 8 1 0 1) out0 tx0
+Xport1 TTY(9600 8 1 0 1) out1 tx1
+
+; Cross-wire and combine port0:TX and cncb1:TX into cncb0:RX
+X ND2 out0 tx1 nrx0
+X ND2 nrx0 VDD rx0
+
+; Cross-wire and combine port1:TX and cncb0:TX into cncb1:RX
+X ND2 out1 tx0 nrx1
+X ND2 nrx1 VDD rx1
+
+; Need a large scope buffer to compensate for the slow typing
+; (relative to clock speed) of the user
+.STORE 2000m
+.PLOT V(rx0) V(rx1)
+
+
+
+
+
+
