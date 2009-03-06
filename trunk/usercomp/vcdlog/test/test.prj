@@ -1,0 +1,40 @@
+; ************************************************************
+; PROJECT: Simple test of the VCD log user component
+; AUTHOR: Wojciech Stryjewski
+; ************************************************************
+
+; Micro + software running
+; ------------------------------------------------------------
+.MICRO "ATmega8"
+.PROGRAM "test.asm"
+.TARGET "test.hex"
+
+; Following lines are optional; if not included
+; exactly these values are taken by default
+; ------------------------------------------------------------
+.POWER VDD=5 VSS=0  ; Power nodes
+.CLOCK 1meg         ; Micro clock
+.STORE 250m         ; Trace (micro+signals) storage time
+
+; Micro nodes: RESET, AREF, PB0-PB7, PC0-PC6, PD0-PD7, ACO, TIM1OVF, ADC6, ADC7
+; Define here the hardware around the micro
+; ------------------------------------------------------------
+
+; To use this component, use the following component definition:
+;
+; X<Name> _vcdlog <Data>
+;
+; The component always writes to a file named "vcdlog.vcd", and if multiple
+; component instances are used in the same project file, then the logged data
+; from each instance is interleaved within the file. The instance <Name> is
+; used as the variable name in the VCD file. <Data> is the single input
+; bit being logged. The VCD file always uses a 1ns timescale, which will
+; be adequate for all clock speeds under 1Ghz. The maximum number of vcdlog
+; instances allowed per project is 94 (due to the single character ASCII
+; identifiers used in a VCD file).
+
+Xcount0 _vcdlog pd0
+Xcount1 _vcdlog pd1
+Xcount2 _vcdlog pd2
+Xcount3 _vcdlog pd3
+
