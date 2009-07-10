@@ -35,7 +35,7 @@ END_PINS
 enum {CLK_STOP, CLK_INTERNAL, CLK_EXT_FALL, CLK_EXT_RISE, CLK_UNKNOWN};
 enum {ACT_NONE, ACT_TOGGLE, ACT_CLEAR, ACT_SET, ACT_RESERVED}; // Actions on compare
 enum {WAVE_NORMAL, WAVE_PWM_PC, WAVE_CTC, WAVE_PWM_FAST, WAVE_RESERVED, WAVE_UNKNOWN};
-enum {DISBL_BY_SLEEP = 1, DISBL_BY_PRR = 2}; // Disable flags. Combine by ORing
+enum {DISBL_BY_SLEEP = 1, DISBL_BY_PRR = 2, DISBL_BY_TSM = 4}; // Disable flags. Combine by ORing
 enum {DEBUG_LOG = 1, DEBUG_FUTURE1 = 2, DEBUG_FUTURE2 = 4}; // For Debug. To combine by ORing
 enum {VAL_NONE, VAL_00, VAL_FF, VAL_OCRA}; // Counter TOP/overflow value selected by WGM bits
 
@@ -72,12 +72,13 @@ DECLARE_VAR
    int _Top;               // Counter TOP value (0xFF, OCRA, etc)
    int _Overflow;          // Counter value that causes overflow interrupt
    int _Update_OCR;        // Counter value at which to update OCR double-buffer
-   WORD8 _OCR0A_buffer;    // For OCR double buffering
+   WORD8 _OCR0A_buffer;    // For OCR double buffering in PWM modes
    WORD8 _OCR0B_buffer;    //
    int _Action_comp_A;     // To code the actions to be performed at
    int _Action_comp_B;     // output compare
    int _Action_top_A;      //
    int _Action_top_B;
+   int _Last_PSR;          // Clock cycle in which last PSRSYNC/PSRASY occurred
    int _Debug;             // To store debugging options
 END_VAR
 #define Clock_source VAR(_Clock_source)
@@ -96,6 +97,7 @@ END_VAR
 #define Action_comp_B VAR(_Action_comp_B)
 #define Action_top_A  VAR(_Action_top_A)
 #define Action_top_B  VAR(_Action_top_B)
+#define Last_PSR VAR(_Last_PSR)
 #define Debug VAR(_Debug)
 
 // Some static tables for clock prescaling and timer mode display
@@ -190,9 +192,9 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
    case r: {\
       if((pData.x & m) != m) { \
          WARNING("Unknown bits (X) written into "#r" register", CAT_MEMORY, WARN_MEMORY_WRITE_X_IO); \
-         Log("Updating register "#r": $??"); \
+         Log("Write register "#r": $??"); \
       } else { \
-         Log("Updating register "#r": $%02X", pData.d & m); \
+         Log("Write register "#r": $%02X", pData.d & m); \
       }
 
 #define end_register } break;
@@ -221,10 +223,12 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
           // compare actions, we do this check after the modes are updated.
           if(pData[7] == 1) {       // FOC0A = bit 7
              if(Waveform == WAVE_NORMAL || Waveform == WAVE_CTC)
+                Log("OCRA force compate");
                 Action_on_port(OCA, Action_comp_A);
           }
           if(pData[6] == 1) {       // FOC0B = bit 6
              if(Waveform == WAVE_NORMAL || Waveform == WAVE_CTC)
+                Log("OCRB force compate");
                 Action_on_port(OCB, Action_comp_B);
           }
 
@@ -247,7 +251,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
              REG(OCR0A) = pData;
           }
           Update_display(); // Buffer static control need update
-        end_register
+       end_register
 
        case_register(OCR0B, 0xFF) // Output Compare Register B
        //------------------------------------------------------
@@ -273,8 +277,8 @@ void On_remind_me(double pTime, int pAux)
    if(Clock_source != CLK_INTERNAL)  // Or clock source is no longer internal
       return;
 
-   Count();                                     // Launch next tick (in clock
-   REMIND_ME2(Timer_period, ++Tick_signature);  // cycles); update signature
+   Count();        // Launch next tick (in clock cycles)
+   Go();
 }
 
 void On_port_edge(PORT pPort, EDGE pEdge, double pTime)
@@ -316,6 +320,7 @@ void On_reset(int pCause)
    Action_top_B = ACT_NONE;
    TAKEOVER_PORT(OCA, false);  // Release ports; a reset can happen
    TAKEOVER_PORT(OCB, false);  // at any time...
+   Last_PSR = 0;
    Update_display();
 }
 
@@ -325,24 +330,36 @@ void On_notify(int pWhat)
 // handle the PRR register and prescaler reset (coming from dummy component)
 {
    switch(pWhat) {
-      case NTF_PRR0:                 // A 0 set in PPR register bit for TIMER 0
+      case NTF_PRR_ENABLE:           // A 0 set in PPR register bit for TIMER 0
          Disabled &= ~DISBL_BY_PRR;  // Remove disable flag an go
-         Go();                       //
+         Log("Enabled by PRR");
          Update_display();
+         Go();
          break;
 
-      case NTF_PRR1:                 // A 1 set in PPR register bit for TIMER 0
+      case NTF_PRR_DISABLE:          // A 1 set in PPR register bit for TIMER 0
          Log("Disabled by PRR");
          Disabled |= DISBL_BY_PRR;   // Add flag
          Update_display();
          break;
 
-      case NTF_PSRSYNC0:                     // Prescaler reset. Handle with
-      case NTF_PSRASY0:                      // the tick signature
-         if(Clock_source == CLK_INTERNAL) {  //
-            Tick_signature++;                // Void any pending tick and
-            Go();                            // go again
+      case NTF_TSM_HOLD:             // Timer sync mode; prescaler reset continuously asserted
+         Log("Disabled by TSM");
+         Disabled |= DISBL_BY_TSM;   // Add flag
+         Update_display();
+         break;
+
+      case NTF_PSR_RESET:                              // Prescaler reset. Record elapsed CPY cycles to simulate
+         Last_PSR = GET_MICRO_INFO(INFO_CPU_CYCLES);   // the reset and ensure timers stay synchronized
+         Log("Prescaler reset");
+         
+         if (Disabled & DISBL_BY_TSM) {                // Restart counter if previously disabled by TSM
+            Log("Enabled by TSM");         
+            Disabled &= ~DISBL_BY_TSM;
+            Update_display();
          }
+         
+         Go();
          break;
    }
 }
@@ -356,6 +373,7 @@ void On_sleep(int pMode)
       case SLEEP_EXIT:                 // Micro wakes up. Remove the
          Disabled &= ~DISBL_BY_SLEEP;  // flag and go.
          Log("Exit from SLEEP");
+         Update_display();
          Go();
          break;
 
@@ -368,6 +386,7 @@ void On_sleep(int pMode)
       case SLEEP_NOISE_REDUCTION:
          Log("Disabled by SLEEP");
          Disabled |= DISBL_BY_SLEEP;   // Set the flag
+         Update_display();
          break;
    }
    Update_display();
@@ -392,14 +411,17 @@ void On_gadget_notify(GADGET pGadget, int pCode)
 
 void Go()
 //******
-// Activates the counter, either by writing the control register, waking up
-// from sleep or PRR change
+// Schedule the next timer tick if the counter is not disabled and using the
+// internal clock source. Called on every timer tick, each time the counter
+// is re-enabled, and each time the clock source changes. The Tick_signature
+// is updated each item to cancel any already pending ticks which may no longer
+// be valid.
 {
    if(Disabled)
       return;
    if(Clock_source == CLK_INTERNAL) {
-      Log("Start counting");
-      REMIND_ME2(Timer_period, ++Tick_signature);
+      unsigned int cycles = GET_MICRO_INFO(INFO_CPU_CYCLES) - Last_PSR;
+      REMIND_ME2(Timer_period - (cycles % Timer_period), ++Tick_signature);
    }
 }
 
@@ -410,9 +432,9 @@ void Action_on_port(PORT pPort, int pCode)
 {
    switch(pCode) {
       case ACT_TOGGLE:
-      	SET_PORT(pPort, TOGGLE); break;
+         SET_PORT(pPort, TOGGLE); break;
       case ACT_SET:
-      	SET_PORT(pPort, Counting_up ? 1 : 0); break;
+       	 SET_PORT(pPort, Counting_up ? 1 : 0); break;
       case ACT_CLEAR:
          SET_PORT(pPort, Counting_up ? 0 : 1); break;
    }
@@ -425,6 +447,13 @@ void Count()
 // All compare match outputs and compare/overflow flag registers are delayed
 // by one timer cycle from when the match occured.
 {
+   // Do nothing on reserved/unknown waveform; we don't know the count sequence
+   if(Waveform == WAVE_RESERVED || Waveform == WAVE_UNKNOWN) {
+      return;
+   }
+
+   // TODO: Skip output compare if TCNT was written
+
    if(REG(TCNT0) == REG(OCR0A)) {             // if count == compare A register ...
       Action_on_port(OCA, Action_comp_A);
       SET_INTERRUPT_FLAG(CMPA, FLAG_SET);     // CMPA: defined in DECLARE_INTERRUPTS
@@ -437,12 +466,18 @@ void Count()
       SET_INTERRUPT_FLAG(OVF, FLAG_SET);      // OVF, defined in DECLARE_INTERRUPTS
    }
 
-   if(Update_OCR) {
-      if(REG(TCNT0) == Value(Update_OCR)) {   // Update OCR on TOP or BOTTOM if double buffered
+   if(Update_OCR) {                           // Update OCR on TOP or BOTTOM if double buffered
+      if(REG(TCNT0) == Value(Update_OCR)) {
+         //if(REG(OCR0A) != OCROA_buffer)
+         //            Log("Update double-buffered register "#r": $%02X", pData.d & m);
+
          REG(OCR0A) = OCR0A_buffer;
          REG(OCR0B) = OCR0B_buffer;
       }
    }
+
+   // TODO: Add the special output compare transition for PWM mode
+   // TODO: Create structures for each output compare data
 
    if(Counting_up) {
       if(REG(TCNT0) == Value(Top)) {          // Reached TOP value...?
@@ -513,6 +548,7 @@ void Update_waveform()
          Top = VAL_FF; Update_OCR = VAL_NONE; Overflow = VAL_FF;
          break;
    }
+
    if(newWaveform != Waveform) {
       Waveform = newWaveform;
       Log("Updating waveform: %s %s", Wave_text[Waveform], Top_text[Top]);
@@ -620,8 +656,8 @@ void Update_clock_source()
       	newClockSource = CLK_EXT_RISE;
          break;
    }
+   
    // Warn aobut a clock hot switching and log changes
-   //
    if(newPrescIndex != Prescaler_index) {
       Prescaler_index = newPrescIndex;
       if(Prescaler_index > 0)       
@@ -633,9 +669,10 @@ void Update_clock_source()
          WARNING("Changed clock source while running", CAT_TIMER, WARN_PARAM_BUSY);
       Clock_source = newClockSource;
       Log("Updating clock source: %s", Clock_text[Clock_source]);
-      if(Clock_source == CLK_INTERNAL)
-         Go();
    }
+
+   // Re-schedule pending timer tick to reflect new prescaler value
+   Go();
 }
 
 void Update_display()
@@ -656,7 +693,7 @@ void Update_display()
    sprintf(myBuffer, "$%02X", OCR0B_buffer.d);     // Display in HEX
    SetWindowText(GET_HANDLE(GADGET9), myBuffer);   //
    
-   //TODO: Can we use a WORD_8_VIEW control for the OCRA/B buffers?
+   // TODO: Should we disable the double-buffer static displays if non-PWM mode?
 }
 /* >>> Improvement: a set of variables, Handle_xxx, can be declared at DECLARE_VAR, to
        keep the windows handles just once at the beginning, instead of calling
