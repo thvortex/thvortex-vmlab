@@ -73,8 +73,6 @@ DECLARE_VAR
    WORD8 _OCR0B_buffer;    //
    int _Action_comp_A;     // To code the actions to be performed at
    int _Action_comp_B;     // output compare
-   int _Action_top_A;      //
-   int _Action_top_B;
    int _Last_PSR;          // Clock cycle in which last PSRSYNC/PSRASY occurred
    BOOL _Compare_blocked;  // Writing TCNT0 blocks output compare for one tick
    BOOL _TSM;              // Counter paused while TSM bit set in GTCCR
@@ -94,8 +92,6 @@ END_VAR
 #define OCR0B_buffer VAR(_OCR0B_buffer)
 #define Action_comp_A VAR(_Action_comp_A)
 #define Action_comp_B VAR(_Action_comp_B)
-#define Action_top_A  VAR(_Action_top_A)
-#define Action_top_B  VAR(_Action_top_B)
 #define Last_PSR VAR(_Last_PSR)
 #define Compare_blocked VAR(_Compare_blocked)
 #define TSM VAR(_TSM)
@@ -138,7 +134,7 @@ int Value(int);
 
 const char *On_create()                   // Mandatory function
 {
-   Debug = DEBUG_LOG; // TODO: Replace with 0
+   Debug = 0;
    return NULL;
 }
 void On_destroy()                         //     "        "
@@ -328,12 +324,10 @@ void On_reset(int pCause)
    Update_OCR = VAL_NONE;
    Action_comp_A = ACT_NONE;
    Action_comp_B = ACT_NONE;
-   Action_top_A = ACT_NONE;
-   Action_top_B = ACT_NONE;
    TAKEOVER_PORT(OCA, false);  // Release ports; a reset can happen
    TAKEOVER_PORT(OCB, false);  // at any time...
    Last_PSR = 0;
-   Compare_blocked = false; // Prevent compare match immediately after reset 
+   Compare_blocked = true; // Prevent compare match immediately after reset 
    TSM = false;
    Update_display();
 }
@@ -410,12 +404,9 @@ void On_gadget_notify(GADGET pGadget, int pCode)
 //*********************************************
 // Response to notification from "Log" checkbox and toggle flag
 {
-   Log("On_gadget_notify()");
-#if 0
    if(pGadget == GADGET11 && pCode == BN_CLICKED) {
       Debug ^= DEBUG_LOG;
    }
-#endif
 }
 
 //==============================================================================
@@ -437,6 +428,10 @@ void Go()
          return;
       unsigned int cycles = GET_MICRO_INFO(INFO_CPU_CYCLES) - Last_PSR;
       REMIND_ME2(Timer_period - (cycles % Timer_period), ++Tick_signature);
+      Log("cycles: %d - %d = %d", GET_MICRO_INFO(INFO_CPU_CYCLES), Last_PSR,
+         GET_MICRO_INFO(INFO_CPU_CYCLES) - Last_PSR);
+      Log("REMIND_ME2(%d, %d)", Timer_period - (cycles % Timer_period),
+         Tick_signature);
    }
 }
 
@@ -449,13 +444,10 @@ void Action_on_port(PORT pPort, int pCode, BOOL pMode)
 
    switch(pCode) {
       case ACT_TOGGLE:
-         Log("SET_PORT(%d, %d)", pPort, TOGGLE);
          rc = SET_PORT(pPort, TOGGLE); break;
       case ACT_SET:
-         Log("SET_PORT(%d, %d)", pPort, pMode ? 1 : 0);
          rc = SET_PORT(pPort, pMode ? 1 : 0); break;
       case ACT_CLEAR:
-         Log("SET_PORT(%d, %d)", pPort, pMode ? 0 : 1);
          rc = SET_PORT(pPort, pMode ? 0 : 1); break;
    }
    
@@ -511,25 +503,26 @@ void Count()
    }
    Compare_blocked = false;
 
-   // If in PWM PC mode and output compare values are outside of the counting range,
-   // then force the output pin to a fixed value without generating compare match
-   // interrupt
-   // TODO: Double-check when REG(OCR0A) == TOP
-   if(Waveform == WAVE_PWM_PC) {
-      if(REG(OCR0A) == 0 || REG(OCR0A).d > Value(Top) || REG(OCR0B).x != 0xff) {
-         Log("Special OCR0A CASE");
-         Action_on_port(OCA, Action_comp_A, true);
-      }
-      if(REG(OCR0B) == 0 || REG(OCR0B).d > Value(Top) || REG(OCR0B).x != 0xff) {
-         Log("Special OCR0B CASE");
-         Action_on_port(OCB, Action_comp_B, true);
-      }
-   }
+   // PWM modes require special output compare actions when counter reaches TOP
+   if(REG(TCNT0) == Value(Top)) {
 
-   // Set/Clear ports in Fast PWM mode if reached TOP value while up counting
-   if(Counting_up && REG(TCNT0) == Value(Top)) {
-      Action_on_port(OCA, Action_top_A);     
-      Action_on_port(OCB, Action_top_B);     
+      // If in PWM PC mode, when the counter reaches TOP, the output compare
+      // values must equal the result of an up-counting compare match. This
+      // takes care of the special cases when 
+      if(Waveform == WAVE_PWM_PC) {
+         if(!(REG(OCR0A) == Value(Top))) {
+            Action_on_port(OCA, Action_comp_A, true);
+         }
+         if(!(REG(OCR0B) == Value(Top))) {
+            Action_on_port(OCB, Action_comp_B, true);
+         }
+      }
+
+      // In fast PWM mode, the PWM cycle begins when counter reaches TOP
+      if(Waveform == WAVE_PWM_FAST) {
+         Action_on_port(OCA, Action_comp_A, false);     
+         Action_on_port(OCB, Action_comp_B, false);     
+      }
    }
    
    // If OCR double buffering in effect, then update real OCR registers when needed
@@ -546,11 +539,11 @@ void Count()
       }
    }
 
-   // TODO: Need special case for PWM_PC: If REG(OCR0A) == MAX ?? or ?? REG(OCR0A) > TOP && TCNT==TOP
-   
-   // Increment counter and wrap at TOP value or decrement counter if downcounting in PWM PC mode
+   // Increment/decrement counter and clear after TOP was reached
    REG(TCNT0).d += Counting_up ? 1 : -1;
-   REG(TCNT0).d %= Value(Top) + 1;
+   if(Counting_up && REG(TCNT0) == Value(Top) + 1) {
+      REG(TCNT0) = 0;
+   }
 }
 
 void Update_waveform()
@@ -570,7 +563,7 @@ void Update_waveform()
    switch(fullWaveCode) {       // Apply AVR manual (table #51)
 
       case 0: // Normal timer mode (TOP=0xFF)
-         newWaveform = WAVE_NORMAL;
+         newWaveform = WAVE_NORMAL; Counting_up = true;
          Top = VAL_FF; Update_OCR = VAL_NONE; Overflow = VAL_FF;
          break;
 
@@ -580,12 +573,12 @@ void Update_waveform()
          break;
 
       case 2: // CTC (TOP=OCRA)
-         newWaveform = WAVE_CTC;
+         newWaveform = WAVE_CTC; Counting_up = true;
          Top = VAL_OCRA; Update_OCR = VAL_NONE; Overflow = VAL_FF;
          break;
 
       case 3: // Fast PWM (TOP=0xFF)
-         newWaveform = WAVE_PWM_FAST;
+         newWaveform = WAVE_PWM_FAST; Counting_up = true;
          Top = VAL_FF; Update_OCR = VAL_00; Overflow = VAL_FF;
          break;
 
@@ -595,7 +588,7 @@ void Update_waveform()
          break;
 
       case 7: // Fast PWM (TOP=OCRA)
-         newWaveform = WAVE_PWM_FAST;
+         newWaveform = WAVE_PWM_FAST; Counting_up = true;
          Top = VAL_OCRA; Update_OCR = VAL_00; Overflow = VAL_OCRA;
          break;
 
@@ -608,11 +601,10 @@ void Update_waveform()
    if(newWaveform != Waveform) {
       Waveform = newWaveform;
       Log("Updating waveform: %s (TOP=%s)", Wave_text[Waveform], Top_text[Top]);
-      Counting_up = true; // TODO: Should we leave this unset if switching PWM phase correct modes?
       if(Clock_source != CLK_STOP)
       	WARNING("Changing waveform while the timer is running", CAT_TIMER, WARN_PARAM_BUSY);
       if(Waveform == WAVE_RESERVED)
-        WARNING("Reserved waveform code", CAT_TIMER, WARN_PARAM_RESERVED);
+         WARNING("Reserved waveform mode", CAT_TIMER, WARN_PARAM_RESERVED);
    }
 }
 
@@ -625,74 +617,56 @@ void Update_compare_actions()
    int oldAction_comp_B = Action_comp_B;
 
    Action_comp_A = ACT_NONE;  // Compare A
-   Action_top_A = ACT_NONE;
    int compCode = REG(TCCR0A).get_field(7, 6); // Bits 7, 6  COM0A1, COM0A0
    switch(compCode) {
       case 1:                               // Toggle
-         Action_comp_A = ACT_TOGGLE; break;
-      case 2:                               // Clear port
-         Action_comp_A = ACT_CLEAR; break;
-      case 3:                               // Set port
-         Action_comp_A = ACT_SET; break;
-   }
-   if(Waveform == WAVE_PWM_FAST || Waveform == WAVE_PWM_PC) {
-      switch(Action_comp_A) {
-         case ACT_TOGGLE:                 // Must check WGM02 bit, since
-            if(REG(TCCR0B)[3] == 0)       // disables toggle (TCCR0B, bit 3)
+         Action_comp_A = ACT_TOGGLE;
+         if(Waveform == WAVE_PWM_FAST || Waveform == WAVE_PWM_PC) {
+            if(REG(TCCR0B)[3] == 0) {      // disables toggle (TCCR0B, bit 3)
                Action_comp_A = ACT_NONE;
-            break;
-         case ACT_CLEAR:
-            if(Waveform == WAVE_PWM_FAST)
-            	Action_top_A = ACT_SET;
-            break;
-         case ACT_SET:
-            if(Waveform == WAVE_PWM_FAST)
-            	Action_top_A = ACT_CLEAR;
-            break;
-      }
+            }
+         }
+         break;
+         
+      case 2:                               // Clear port
+         Action_comp_A = ACT_CLEAR;
+         break;
+         
+      case 3:                               // Set port
+         Action_comp_A = ACT_SET;
+         break;
    }
 
    Action_comp_B = ACT_NONE;  // Compare B; some small different behaviour
-   Action_top_B = ACT_NONE;
    compCode = REG(TCCR0A).get_field(5, 4); // Bits 5, 4  COM0B1, COM0B0
    switch(compCode) {
       case 1:                               // Toggle
-         Action_comp_B = ACT_TOGGLE; break;
-      case 2:                               // Clear port
-         Action_comp_B = ACT_CLEAR; break;
-      case 3:                               // Set port
-         Action_comp_B = ACT_SET; break;
-   }
-   if(Waveform == WAVE_PWM_FAST || Waveform == WAVE_PWM_PC) {
-      switch(Action_comp_B) {
-         case ACT_TOGGLE:
+         Action_comp_B = ACT_TOGGLE;
+         if(Waveform == WAVE_PWM_FAST || Waveform == WAVE_PWM_PC) {
             Action_comp_B = ACT_RESERVED;  // Tables #49/50 manual
-            break;
-         case ACT_CLEAR:
-            if(Waveform == WAVE_PWM_FAST)
-            	Action_top_B = ACT_SET;
-            break;
-         case ACT_SET:
-            if(Waveform == WAVE_PWM_FAST)
-            	Action_top_B = ACT_CLEAR;
-            break;
-      }
+         }
+         break;
+         
+      case 2:                               // Clear port
+         Action_comp_B = ACT_CLEAR;
+         break;
+         
+      case 3:                               // Set port
+         Action_comp_B = ACT_SET;
+         break;
    }
    if(Action_comp_B == ACT_RESERVED) {
       WARNING("Reserved combination of COM0Bx bits", CAT_TIMER, WARN_PARAM_RESERVED);
    }
 
    // If any action on output compare pins, I need to be the owner
-   // TODO: I don't think we need to check for PORT_NOT_OUTPUT here
    int rc;
    rc = TAKEOVER_PORT(OCA, Action_comp_A != ACT_NONE);
-   Log("TAKEOVER_PORT(%d, %d) == %d", OCA, Action_comp_A != ACT_NONE, rc); // TODO: Delete me
    if(rc == PORT_NOT_OUTPUT) {
       WARNING("OC0A enabled but pin not defined as output in DDR", CAT_TIMER,
          WARN_TIMERS_OUTPUT);
    }
    rc = TAKEOVER_PORT(OCB, Action_comp_B != ACT_NONE && Action_comp_B != ACT_RESERVED);
-   Log("TAKEOVER_PORT(%d, %d) == %d", OCB, Action_comp_B != ACT_NONE && Action_comp_B != ACT_RESERVED, rc); // TODO: Delete me
    if(rc == PORT_NOT_OUTPUT) {
       WARNING("OC0B enabled but pin not defined as output in DDR", CAT_TIMER,
          WARN_TIMERS_OUTPUT);
@@ -765,8 +739,9 @@ void Update_display()
    SetWindowText(GET_HANDLE(GADGET7), Wave_text[Waveform]);
    SetWindowText(GET_HANDLE(GADGET12), Top_text[Top]);
 
-   SetWindowText(GET_HANDLE(GADGET8), hex(OCR0A_buffer)); // Output compare buffers
-   SetWindowText(GET_HANDLE(GADGET9), hex(OCR0B_buffer)); // Display in HEX
+   // Output compare buffers in hex
+   SetWindowText(GET_HANDLE(GADGET8), hex(OCR0A_buffer));
+   SetWindowText(GET_HANDLE(GADGET9), hex(OCR0B_buffer));
    
    // Disable (i.e. gray out) double-buffer displays if not in use
    EnableWindow(GET_HANDLE(GADGET8), Update_OCR);
