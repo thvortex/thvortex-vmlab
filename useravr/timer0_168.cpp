@@ -32,7 +32,7 @@ END_PINS
 enum {CLK_STOP, CLK_INTERNAL, CLK_EXT_FALL, CLK_EXT_RISE, CLK_UNKNOWN};
 enum {ACT_NONE, ACT_TOGGLE, ACT_CLEAR, ACT_SET, ACT_RESERVED}; // Actions on compare
 enum {WAVE_NORMAL, WAVE_PWM_PC, WAVE_CTC, WAVE_PWM_FAST, WAVE_RESERVED, WAVE_UNKNOWN};
-enum {DISBL_BY_SLEEP = 1, DISBL_BY_PRR = 2, DISBL_BY_TSM = 4}; // Disable flags. Combine by ORing
+enum {DISBL_BY_SLEEP = 1, DISBL_BY_PRR = 2}; // Disable flags. Combine by ORing
 enum {DEBUG_LOG = 1, DEBUG_FUTURE1 = 2, DEBUG_FUTURE2 = 4}; // For Debug. To combine by ORing
 enum {VAL_NONE, VAL_00, VAL_FF, VAL_OCRA}; // Counter TOP/overflow value selected by WGM bits
 
@@ -54,6 +54,11 @@ DECLARE_INTERRUPTS
    CMPA, CMPB, OVF
 END_INTERRUPTS 
 
+// This type is used to keep track of elapsed CPU and I/O clock cycles. Using
+// an unsigned type allows the cycle count to function correctly even when it
+// wraps due to the rules of modulo arithmetic.
+typedef unsigned int uint;
+
 // To insure that more than a timer instance can be placed, declare
 // variables here. Some #defines below hide the VAR() use, making the
 // code more readable
@@ -71,9 +76,13 @@ DECLARE_VAR
    int _Update_OCR;        // Counter value at which to update OCR double-buffer
    WORD8 _OCR0A_buffer;    // For OCR double buffering in PWM modes
    WORD8 _OCR0B_buffer;    //
-   int _Action_comp_A;     // To code the actions to be performed at
-   int _Action_comp_B;     // output compare
-   int _Last_PSR;          // Clock cycle in which last PSRSYNC/PSRASY occurred
+   int _Action_comp_A;     // None/Toggle/Set/Clear actions performed
+   int _Action_comp_B;     //    at OCR match. 
+   int _Action_top_A;      // Set/Clear actions performs when counter reaches
+   int _Action_top_B;      //    TOP in PWM mode
+   uint _Last_PSR;         // I/O clock cycle when last PSRSYNC/PSRASY occurred
+   uint _Last_disabled;    // I/O clock cycle when _Disabled became non-zero
+   uint _Total_disabled;   // Total I/O clock cycles lost due to SLEEP or PRR
    BOOL _Compare_blocked;  // Writing TCNT0 blocks output compare for one tick
    BOOL _TSM;              // Counter paused while TSM bit set in GTCCR
    int _Debug;             // To store debugging options
@@ -92,7 +101,11 @@ END_VAR
 #define OCR0B_buffer VAR(_OCR0B_buffer)
 #define Action_comp_A VAR(_Action_comp_A)
 #define Action_comp_B VAR(_Action_comp_B)
+#define Action_top_A  VAR(_Action_top_A)
+#define Action_top_B  VAR(_Action_top_B)
 #define Last_PSR VAR(_Last_PSR)
+#define Last_disabled VAR(_Last_disabled)
+#define Total_disabled VAR(_Total_disabled)
 #define Compare_blocked VAR(_Compare_blocked)
 #define TSM VAR(_TSM)
 #define Debug VAR(_Debug)
@@ -127,6 +140,7 @@ void Update_display();
 void Action_on_port(PORT, int, BOOL pMode = Counting_up);
 void Log(const char *pFormat, ...);
 int Value(int);
+uint Get_io_cycles(void);
 
 //==============================================================================
 // Callback functions, On_xxx(...)
@@ -270,6 +284,11 @@ void On_remind_me(double pTime, int pAux)
 // prescaled clock tick. The pAux parameter holds a signature value
 // used to void pending ticks in case of prescaler reset
 {
+   char buf[128];
+   snprintf(buf, 128, "On_remind_me(%lg, %d): ticksig=%d cpucycles=%d", pTime, pAux,
+      Tick_signature, GET_MICRO_INFO(INFO_CPU_CYCLES));
+   PRINT(buf);
+
    if(Tick_signature != pAux)        // If need to void a pending tick
       return;
    if(Disabled)                      // If disabled by SLEEP, PPR, etc
@@ -324,9 +343,13 @@ void On_reset(int pCause)
    Update_OCR = VAL_NONE;
    Action_comp_A = ACT_NONE;
    Action_comp_B = ACT_NONE;
+   Action_top_A = ACT_NONE;
+   Action_top_B = ACT_NONE;
    TAKEOVER_PORT(OCA, false);  // Release ports; a reset can happen
    TAKEOVER_PORT(OCB, false);  // at any time...
    Last_PSR = 0;
+   Last_disabled = 0;
+   Total_disabled = 0;
    Compare_blocked = true; // Prevent compare match immediately after reset 
    TSM = false;
    Update_display();
@@ -349,6 +372,7 @@ void On_notify(int pWhat)
          Log("Disabled by PRR");
          Disabled |= DISBL_BY_PRR;   // Add flag
          Update_display();
+         Go();
          break;
 
       case NTF_TSM:                  // Timer sync mode; prescaler reset continuously asserted
@@ -357,9 +381,11 @@ void On_notify(int pWhat)
          Update_display();
          break;
 
-      case NTF_PSR:                                    // Prescaler reset. Record elapsed
-         Last_PSR = GET_MICRO_INFO(INFO_CPU_CYCLES);   // CPU cycles to simulate the reset
-         Log("Prescaler reset by PSRSYNC");            // and ensure timers stay synchronized
+      case NTF_PSR:                  // Prescaler reset.
+         // Record elapsed I/O clock cycles to simulate the reset and ensure all
+         // timers sharing the same prescaler stay synchronized
+         Last_PSR = Get_io_cycles();   
+         Log("Prescaler reset by PSRSYNC");            
          
          if (TSM) {              // Restart counter if previously disabled by TSM
             Log("Finished TSM");         
@@ -395,6 +421,7 @@ void On_sleep(int pMode)
          Log("Disabled by SLEEP");
          Disabled |= DISBL_BY_SLEEP;   // Set the flag
          Update_display();
+         Go();
          break;
    }
    Update_display();
@@ -409,6 +436,14 @@ void On_gadget_notify(GADGET pGadget, int pCode)
    }
 }
 
+void On_time_step(double pTime)
+{
+   char buf[128];
+   snprintf(buf, 128, "On_time_step(%lg): cpucycles=%d", pTime,
+      GET_MICRO_INFO(INFO_CPU_CYCLES));
+   PRINT(buf);   
+}
+
 //==============================================================================
 // Internal functions (non-callback). Prototypes defined above
 //==============================================================================
@@ -421,17 +456,30 @@ void Go()
 // is updated each item to cancel any already pending ticks which may no longer
 // be valid.
 {
-   if(Disabled)
-      return;      
+   if(Disabled) {
+      // Track when I/O clock first became disabled
+      if(!Last_disabled)
+         Last_disabled = Get_io_cycles();
+      return;
+   }
+   
+   // If the I/O clock was re-enabled, compute how long it was disabled for
+   if(Last_disabled) {
+      Total_disabled = (uint) GET_MICRO_INFO(INFO_CPU_CYCLES) - Last_disabled;
+      Last_disabled = 0;
+   }
+  
    if(Clock_source == CLK_INTERNAL) {
       if(TSM && Timer_period != 1) // TSM only holds prescaler not direct IO clock
          return;
-      unsigned int cycles = GET_MICRO_INFO(INFO_CPU_CYCLES) - Last_PSR;
+      uint cycles = Get_io_cycles() - Last_PSR;
       REMIND_ME2(Timer_period - (cycles % Timer_period), ++Tick_signature);
-      Log("cycles: %d - %d = %d", GET_MICRO_INFO(INFO_CPU_CYCLES), Last_PSR,
-         GET_MICRO_INFO(INFO_CPU_CYCLES) - Last_PSR);
-      Log("REMIND_ME2(%d, %d)", Timer_period - (cycles % Timer_period),
-         Tick_signature);
+      
+      char buf[128];
+      snprintf(buf, 128, "REMIND_ME2(%d, %d): cpucycles=%d",
+         Timer_period - (cycles % Timer_period), Tick_signature,
+         GET_MICRO_INFO(INFO_CPU_CYCLES));
+      PRINT(buf);
    }
 }
 
@@ -469,6 +517,8 @@ void Count()
 // All compare match outputs and compare/overflow flag registers are delayed
 // by one timer cycle from when the match occured.
 {
+   Log("TCNT=%d", REG(TCNT0));
+
    // Do nothing on reserved/unknown waveform; we don't know the count sequence
    if(Waveform == WAVE_RESERVED || Waveform == WAVE_UNKNOWN) {
       return;
@@ -479,18 +529,35 @@ void Count()
       SET_INTERRUPT_FLAG(OVF, FLAG_SET);
    }
 
-   // Reverse counter direction in PWM PC mode when it reaches either TOP or BOTTOM
+   // Reverse counter direction in PWM PC mode when it reaches TOP/BOTTOM/MAX
    if(Waveform == WAVE_PWM_PC) {
-      if(Counting_up && REG(TCNT0) == Value(Top)) {
-         Counting_up = false;
-      } else if(!Counting_up && REG(TCNT0) == 0) {
-         Counting_up = true;
+      if(Counting_up) {
+         if(REG(TCNT0) == Value(Top)) {
+            Counting_up = false;
+         }
+      } else {
+         if(REG(TCNT0) == 0) {
+            Counting_up = true;
+         }
       }
    }
 
-   // Update output pins if a compare output match occurs. A CPU write to TNCT0 blocks
-   // any output compare in the next timer clock cycle even if the counter was stopped
-   // at the time the TNCT0 write occurred.
+   // If in PWM PC mode, when the counter reaches TOP, the output compare
+   // values must equal the result of an up-counting compare match. This
+   // takes care of the special cases when the OCR registers equal BOTTOM
+   // or are greater than TOP. It also handles the case where the compare
+   // output changes without an OCR match to ensure the outputs are symmetric
+   // around BOTTOM. The only exception to this rule is when OCR equals top.
+   // In that case, the next code block will overwrite the port assignment with
+   // the correct values. If using ACT_TOGGLE, this code block does nothing.
+   if(Waveform == WAVE_PWM_PC && REG(TCNT0) == Value(Top)) {
+      Action_on_port(OCA, Action_top_A, true);
+      Action_on_port(OCB, Action_top_B, true);
+   }
+
+   // Update output pins if a compare output match occurs. A CPU write to TNCT0
+   // blocks any output compare in the next timer clock cycle even if the
+   // counter was stopped at the time the TNCT0 write occurred.
    if(!Compare_blocked) {
       if(REG(TCNT0) == REG(OCR0A)) {
          Action_on_port(OCA, Action_comp_A);
@@ -503,26 +570,12 @@ void Count()
    }
    Compare_blocked = false;
 
-   // PWM modes require special output compare actions when counter reaches TOP
-   if(REG(TCNT0) == Value(Top)) {
-
-      // If in PWM PC mode, when the counter reaches TOP, the output compare
-      // values must equal the result of an up-counting compare match. This
-      // takes care of the special cases when 
-      if(Waveform == WAVE_PWM_PC) {
-         if(!(REG(OCR0A) == Value(Top))) {
-            Action_on_port(OCA, Action_comp_A, true);
-         }
-         if(!(REG(OCR0B) == Value(Top))) {
-            Action_on_port(OCB, Action_comp_B, true);
-         }
-      }
-
-      // In fast PWM mode, the PWM cycle begins when counter reaches TOP
-      if(Waveform == WAVE_PWM_FAST) {
-         Action_on_port(OCA, Action_comp_A, false);     
-         Action_on_port(OCB, Action_comp_B, false);     
-      }
+   // In fast PWM mode, all PWM cycles begin when counter reaches TOP. This is
+   // true even when OCR equals TOP in which case this code block overwrites
+   // the previous port assignment.
+   if(Waveform == WAVE_PWM_FAST && REG(TCNT0) == Value(Top)) {
+      Action_on_port(OCA, Action_top_A, false);     
+      Action_on_port(OCB, Action_top_B, false);     
    }
    
    // If OCR double buffering in effect, then update real OCR registers when needed
@@ -540,9 +593,10 @@ void Count()
    }
 
    // Increment/decrement counter and clear after TOP was reached
-   REG(TCNT0).d += Counting_up ? 1 : -1;
-   if(Counting_up && REG(TCNT0) == Value(Top) + 1) {
+   if(Counting_up && REG(TCNT0) == Value(Top)) {
       REG(TCNT0) = 0;
+   } else {
+      REG(TCNT0).d += Counting_up ? 1 : -1;
    }
 }
 
@@ -617,6 +671,7 @@ void Update_compare_actions()
    int oldAction_comp_B = Action_comp_B;
 
    Action_comp_A = ACT_NONE;  // Compare A
+   Action_top_A = ACT_NONE;
    int compCode = REG(TCCR0A).get_field(7, 6); // Bits 7, 6  COM0A1, COM0A0
    switch(compCode) {
       case 1:                               // Toggle
@@ -630,14 +685,17 @@ void Update_compare_actions()
          
       case 2:                               // Clear port
          Action_comp_A = ACT_CLEAR;
+         Action_top_A = ACT_CLEAR;
          break;
          
       case 3:                               // Set port
          Action_comp_A = ACT_SET;
+         Action_top_A = ACT_SET;
          break;
    }
 
    Action_comp_B = ACT_NONE;  // Compare B; some small different behaviour
+   Action_top_B = ACT_NONE;
    compCode = REG(TCCR0A).get_field(5, 4); // Bits 5, 4  COM0B1, COM0B0
    switch(compCode) {
       case 1:                               // Toggle
@@ -649,10 +707,12 @@ void Update_compare_actions()
          
       case 2:                               // Clear port
          Action_comp_B = ACT_CLEAR;
+         Action_top_B = ACT_CLEAR;
          break;
          
       case 3:                               // Set port
          Action_comp_B = ACT_SET;
+         Action_top_B = ACT_SET;
          break;
    }
    if(Action_comp_B == ACT_RESERVED) {
@@ -764,6 +824,19 @@ int Value(int pMode)
          return REG(OCR0A).d;
       default:
          return -1;
+   }
+}
+
+uint Get_io_cycles(void)
+//*************************
+// Return the total number of I/O clock cycles seen by the timer. The I/O clock
+// runs at the same speed as the CPU clock but it can be disabled by either
+// SLEEP mode or by the PRR (Power Reduction Register)
+{
+   if(Last_disabled) {
+      return Last_disabled;
+   } else {
+      return (uint) GET_MICRO_INFO(INFO_CPU_CYCLES) - Total_disabled;
    }
 }
 
