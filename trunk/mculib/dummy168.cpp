@@ -47,13 +47,22 @@ enum {AUTOCLEAR_SELFPRGEN, AUTOCLEAR_CLKPCE, AUTOCLEAR_IVCE};
 
 const double Clock_presc_table[] = {1, 2, 4, 8, 16, 32, 64, 128, 256}; // For CLKPR
 
+// Component names passed to NOTIFY() for use with Power Reduction Register
+// (PRR). Must be in the same order as the bits in the register. Not implemented
+// for internal VMLAB coded peripherals Names must be as defined in the .INI
+// file 'Peripheral_list' The arbitray integer nr. must be recognized at
+// On_notify( ) at the corresponding peripheral
+const char *PRR_Names[] = {
+   "ADC", "UART", "SPI", "TIMER1", NULL, "TIMER0", "TIMER2", "TWI"
+};
+
 USE_WINDOW(WINDOW_USER_1); // Window to display registers, etc. See .RC file
 
 REGISTERS_VIEW
 //          ID     res ID      b7           .     ..    bit names ...                          b0
 //
    DISPLAY(PCMSK0, GADGET1,  PCINT7,   PCINT6,  PCINT5,  PCINT4,  PCINT3,  PCINT2,  PCINT1,  PCINT0)
-   DISPLAY(PCMSK1, GADGET2,  PCINT15, PCINT14, PCINT13, PCINT12, PCINT11, PCINT10,  PCINT9,  PCINT8)
+   DISPLAY(PCMSK1, GADGET2,  *, PCINT14, PCINT13, PCINT12, PCINT11, PCINT10,  PCINT9,  PCINT8)
    DISPLAY(PCMSK2, GADGET3,  PCINT23, PCINT22, PCINT21, PCINT20, PCINT19, PCINT18, PCINT17, PCINT16)
    DISPLAY(EICRA,  GADGET4,  *, *, *, *, ISC11, ISC10, ISC01, ISC00)
    DISPLAY(CLKPR,  GADGET5,  CLKPCE, *, *, *, CLKPS3, CLKPS2, CLKPS1, CLKPS0)
@@ -188,6 +197,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
                if(REG(MCUCR)[0] == 1) {       // bit 0, IVCE valid only during 4 cycles
                   SET_INTERRUPT_VECTORS(bitIVSEL ? IV_BOOT_RESET : IV_STANDARD_RESET);
                }
+               // TODO: Warn about changing IVSEL while IVCE is disabled
                break;
             case 1:
                REMIND_ME2(4, AUTOCLEAR_IVCE); // Set auto-clear after 4 cycles. Interrupts must be
@@ -228,13 +238,13 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
       //-------------------------------------------------
       // All bits r/w except #4, mask = 0xEF
 
-          NOTIFY("ADC", pData[0] == 1 ? NTF_PRR1 : NTF_PRR0);    // Not implemented for internal
-          NOTIFY("UART", pData[1] == 1 ? NTF_PRR1 : NTF_PRR0);   // VMLAB coded peripherals
-          NOTIFY("SPI", pData[2] == 1 ? NTF_PRR1 : NTF_PRR0);    // Names must be as defined
-          NOTIFY("TIMER1", pData[3] == 1 ? NTF_PRR1 : NTF_PRR0); // in the .INI file 'Peripheral_list'
-          NOTIFY("TIMER0", pData[5] == 1 ? NTF_PRR1 : NTF_PRR0); // The arbitray integer nr. must be recognized
-          NOTIFY("TIMER2", pData[6] == 1 ? NTF_PRR1 : NTF_PRR0); // at On_notify( ) at the corresponding
-          NOTIFY("TWI", pData[7] == 1 ? NTF_PRR1 :  NTF_PRR0);   // peripheral
+          // Check each bit in the register and send out notification only
+          // if the new value is different from the old one.
+          for(int i = 0; i < 8; i++) {
+             if(pData[i] != REG(PRR)[i] && PRR_Names[i]) {
+                NOTIFY(PRR_Names[i], pData[i] == 1 ? NTF_PRR1 : NTF_PRR0);
+             }
+          }
       end_register
 
       case_register(SMCR, 0x0F) // Sleep Mode Control Register
@@ -251,6 +261,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
          if(pData[0] == 1) {                           // Bit 0: SELFPRGEN
             REMIND_ME2(4, AUTOCLEAR_SELFPRGEN);        // Clear after 4 cycles
          }
+         // TODO: Eventually need to handle read-while-write sections here
       end_register
 
       case_register(OSCCAL, 0xFF)  // Oscillator Calibration Register
@@ -385,6 +396,11 @@ int On_instruction(int pCode)
             case 0x05:                       // Write selected page
                retValue = SPM_WRITE_PAGE;
                break;
+            case 0x09:                       // Write memory lock bits
+               retValue = SPM_DENIED;
+               WARNING("SPM: writing lock bits not implemented", CAT_CPU, WARN_MISC);
+               // TODO: Lock bits could be treated like fuses
+               break;
             case -1:                         // If some undetermined value
                WARNING("SPM: some X bits at SPMCSR", CAT_CPU, WARN_MISC);
                retValue = SPM_DENIED;
@@ -442,6 +458,7 @@ void On_port_edge(const char *pPortName, int pBit, EDGE pEdge, double pTime)
             SET_INTERRUPT_FLAG(IOCH1, FLAG_SET);            
          break;
 
+      // TODO: edge INTx interrupts only work if not in sleep (IDLE is ok)
       case 'D':                             // Port "PD": PCINT16 to PCINT23 and INT0, INT1
       //-------                             
          if(pBit == 2) {                           //  INT0 handling, shared by PD2
@@ -515,4 +532,3 @@ void On_gadget_notify(GADGET pGadget, int pCode)
       }
    }
 }
-
