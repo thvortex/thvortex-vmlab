@@ -284,11 +284,6 @@ void On_remind_me(double pTime, int pAux)
 // prescaled clock tick. The pAux parameter holds a signature value
 // used to void pending ticks in case of prescaler reset
 {
-   char buf[128];
-   snprintf(buf, 128, "On_remind_me(%lg, %d): ticksig=%d cpucycles=%d", pTime, pAux,
-      Tick_signature, GET_MICRO_INFO(INFO_CPU_CYCLES));
-   PRINT(buf);
-
    if(Tick_signature != pAux)        // If need to void a pending tick
       return;
    if(Disabled)                      // If disabled by SLEEP, PPR, etc
@@ -436,14 +431,6 @@ void On_gadget_notify(GADGET pGadget, int pCode)
    }
 }
 
-void On_time_step(double pTime)
-{
-   char buf[128];
-   snprintf(buf, 128, "On_time_step(%lg): cpucycles=%d", pTime,
-      GET_MICRO_INFO(INFO_CPU_CYCLES));
-   PRINT(buf);   
-}
-
 //==============================================================================
 // Internal functions (non-callback). Prototypes defined above
 //==============================================================================
@@ -473,13 +460,7 @@ void Go()
       if(TSM && Timer_period != 1) // TSM only holds prescaler not direct IO clock
          return;
       uint cycles = Get_io_cycles() - Last_PSR;
-      REMIND_ME2(Timer_period - (cycles % Timer_period), ++Tick_signature);
-      
-      char buf[128];
-      snprintf(buf, 128, "REMIND_ME2(%d, %d): cpucycles=%d",
-         Timer_period - (cycles % Timer_period), Tick_signature,
-         GET_MICRO_INFO(INFO_CPU_CYCLES));
-      PRINT(buf);
+      REMIND_ME2(Timer_period - (cycles % Timer_period), ++Tick_signature);      
    }
 }
 
@@ -517,8 +498,6 @@ void Count()
 // All compare match outputs and compare/overflow flag registers are delayed
 // by one timer cycle from when the match occured.
 {
-   Log("TCNT=%d", REG(TCNT0));
-
    // Do nothing on reserved/unknown waveform; we don't know the count sequence
    if(Waveform == WAVE_RESERVED || Waveform == WAVE_UNKNOWN) {
       return;
