@@ -28,7 +28,7 @@
 #include <stdio.h>
 
 #define IS_PERIPHERAL       // To distinguish from a normal user component
-#include "C:\VMLAB\bin\blackbox.h"
+#include <blackbox.h>
 #include "useravr.h"
 
 #include "timer0_168.h"
