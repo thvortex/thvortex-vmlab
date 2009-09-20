@@ -27,6 +27,10 @@
 int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {return 1;} // is DLL
 // =============================================================================
 
+// Period (in seconds) of an asynchronous 32.768kHz real-time clock crystal.
+// Used by TIMER2 for REMIND_ME() delays.
+#define PERIOD_32K (1.0 / 32768)
+
 // Involved ports. Keep same order as in .INI file "Port_map = ..." who
 // does the actual assignment to micro ports PD0, etc. This allows multiple instances
 // to be mapped into different port sets
@@ -106,6 +110,7 @@ DECLARE_VAR
    BOOL _TSM;              // Counter paused while TSM bit set in GTCCR
    int _Debug;             // To store debugging options
    int _Async;             // Type of asynchronous mode operation (TIMER2 only)
+   uint _Async_prescaler;  // Explicit prescaler count for asynchronous mode
 END_VAR
 #define Clock_source VAR(_Clock_source)     // To simplify readability...
 #define Disabled VAR(_Disabled)
@@ -130,6 +135,7 @@ END_VAR
 #define TSM VAR(_TSM)
 #define Debug VAR(_Debug)
 #define Async VAR(_Async)
+#define Async_prescaler VAR(_Async_prescaler)
 
 // Some static tables for timer mode display
 const char *Clock_text[] = {
@@ -176,6 +182,8 @@ END_VIEW
 
 void Go();                      // Function prototypes
 void Count();                   //
+void Async_tick();
+void Async_change();
 void Update_waveform();
 void Update_compare_actions();
 void Update_clock_source();
@@ -228,6 +236,8 @@ WORD8 *On_register_read(REGISTER_ID pId)
 // temporary buffer read, etc. Otherwise it can be omitted (this case)
 {
    // TODO: Cannot read any registers if disabled (no clocks)
+   
+   // TODO: TIMER@ async: Check for reading TCNT2 after immediate wakeup
 
    // If OCRx double buffering is in effect, the CPU always reads the buffer
    // instead of the real registers.
@@ -250,6 +260,9 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
 // The micro is writing pData into the pId register This notification
 // allows to perform all the derived operations.
 {
+   PRINT("On_register_write()");
+
+
 // Register selection macros include the "case", X bits check and logging.
 #define case_register(r, m) \
    case r: {\
@@ -263,6 +276,8 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
 #define end_register } break;
 
    // TODO: Cannot write any registers if disabled (no clocks)
+
+   // TODO: TIMER2 check for update-busy bits in async mode
 
    switch(pId) {
 
@@ -334,22 +349,26 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
                 WARN_PARAM_BUSY);
           }
           
-          // Enabling/disabling asynchronous mode can corrupt registers
-          if(pData[5] != REG(ASSR)[5]) {         
-             //REG(TCCRnA).x = 0;
-             //REG(TCCRnB).x = 0;
-             //REG(TCNTn).x = 0;
-             //REG(OCRnA).x = 0;
-             //REG(OCRnB).x = 0;
-             //OCRA_buffer.x = 0;
-             //OCRB_buffer.x = 0;
-             
-             // TODO: Warn about waiting 1 sec for 32K oscillator to stabilize             
-          }
-
+          // TODO: Warn about pending update-busy bits and clear them if
+          // changing async mode
           REG(ASSR) = pData & 0x60;
 
-          // Update everything since registers may have become unknown
+          // Check if asynchronous mode is enabled or disabled in ASSR
+          int oldAsync = Async;
+          switch(REG(ASSR).get_field(6, 5)) {
+             case 1: Async = ASY_32K; break;   // EXCLK=0 AS2=1
+             case 3: Async = ASY_EXT; break;   // EXCLK=1 AS2=2
+             default: Async = ASY_NONE; break; // AS2=0 or EXCLK/AS2 unknown
+          }
+          
+          // Changing the asynchronous mode can corrupt all TIMER2 registers
+          // except for ASSR, so they should be set to UNKNOWN. Also, if the
+          // 32.768kHz oscillator was enabled, then schedule a REMIND_ME()
+          if(oldAsync != Async) {
+             Async_change();
+          }
+   
+          // Update everything since registers values may be unknown now
           Update_waveform();
           Update_compare_actions();
           Update_clock_source();
@@ -362,8 +381,10 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
 void On_remind_me(double pTime, int pAux)
 //**************************************
 // Response to REMIND_ME2() used implement the internal
-// prescaled clock tick. The pAux parameter holds a signature value
-// used to void pending ticks in case of prescaler reset
+// prescaled clock tick or an asynchronous 32.768kHz clock
+// crystal (before prescaling). The pAux parameter holds a
+// signature value used to void pending ticks in case of
+// prescaler reset or clock source changes.
 {
    if(Tick_signature != pAux)        // If need to void a pending tick
       return;
@@ -371,11 +392,26 @@ void On_remind_me(double pTime, int pAux)
       return;
    if(Clock_source != CLK_INTERNAL)  // Or clock source is no longer internal
       return;
-   else if(TSM && Timer_period != 1) // TSM only holds prescaler not direct IO clock
-      return;
+   else 
 
-   Count();        // Launch next tick (in clock cycles)
-   Go();
+   // If using internal clock source, increment counter and launch next tick
+   if(Clock_source == CLK_INTERNAL) {
+      if(TSM && Timer_period != 1)   // TSM holds prescaler not direct clock
+         return;
+         
+      Count();
+      Go();
+   }
+   
+   // If using asynchronous 32kHz XTAL, always increment prescaler and schedule
+   // next oscillator tick. Increment counter only on prescaled ticks of the
+   // oscillator
+#ifdef TIMER_2
+   else if(Clock_source == CLK_32K) {
+      REMIND_ME(PERIOD_32K, ++Tick_signature);
+      Async_tick();
+   }
+#endif
 }
 
 void On_port_edge(PORT pPort, EDGE pEdge, double pTime)
@@ -395,6 +431,13 @@ void On_port_edge(PORT pPort, EDGE pEdge, double pTime)
       Count();
    else if(Clock_source == CLK_EXT_FALL && pEdge == FALL)
       Count();
+      
+   // CLK_EXT is only used with asynchronous TIMER2 operation
+#ifdef TIMER_2
+   else if(Clock_source == CLK_EXT && pEdge == RISE) {
+      Async_tick();
+   }
+#endif
 }
 
 void On_reset(int pCause)
@@ -429,7 +472,13 @@ void On_reset(int pCause)
    Compare_blocked = true; // Prevent compare match immediately after reset 
    TSM = false;
    Async = ASY_NONE;
+   Async_prescaler = 0;
    Update_display();
+}
+
+void On_update_tick(double)
+{
+   PRINT("On_update_tick()");
 }
 
 void On_notify(int pWhat)
@@ -470,11 +519,16 @@ void On_notify(int pWhat)
       case NTF_PSR:                  // Prescaler reset.
          // Record elapsed I/O clock cycles to simulate the reset and ensure all
          // timers sharing the same prescaler stay synchronized
-         // TODO: Reset async prescaler count
-         Last_PSR = Get_io_cycles();   
-         Log("Prescaler reset by PSRSYNC");            
+         Last_PSR = Get_io_cycles();
+         Async_prescaler = 0;
+#ifdef TIMER_2
+         Log("Prescaler reset by PSRASY");
+#else
+         Log("Prescaler reset by PSRSYNC");
+#endif
          
-         if (TSM) {              // Restart counter if previously disabled by TSM
+         // Restart counter if previously disabled by TSM
+         if (TSM) {              
             Log("Finished TSM");         
             TSM = false;
             Update_display();
@@ -516,15 +570,31 @@ void On_sleep(int pMode)
    }
 
    if(wasDisabled != Is_disabled()) {
+      // TODO: TIMER2 async: Set registers to UNKNOWN on deep wake up
+
       if(Is_disabled()) {
          Log("Disabled by SLEEP");
       } else {
          Log("Exit from SLEEP");
       }
+
+#ifdef TIMER_2
+      // Waking up from power-down or standy (and presumebly when entering
+      // either sleep mode) can corrupt all TIMER2 registers except for
+      // ASSR, so they should be set to UNKNOWN. Also, if the 32.768kHz
+      // oscillator was re-enabled, then schedule a new REMIND_ME()
+      if(Async) {
+         Async_change();
+      }
+#endif         
    
       Update_display();
       Go();
-   }   
+   }
+   
+   // TODO: TIMER2 checks:
+   // * check for pending reigster updates if going to ADC sleep/powersave
+   // * check for interrupts on this TOSC clock cycle if going to ADC/powersave
 }
 
 void On_gadget_notify(GADGET pGadget, int pCode)
@@ -540,13 +610,65 @@ void On_gadget_notify(GADGET pGadget, int pCode)
 // Internal functions (non-callback). Prototypes defined above
 //==============================================================================
 
+#ifdef TIMER_2
+void Async_tick()
+//*****************************************
+// Increment the explicit asynchronous prescaler and increment the timer
+// if the prescaler period has been reached. Called from On_remind_me() to
+// handle the 32.768kHz clock tick and from On_port_edge() to handle an
+// external clock tick on TOSC1.
+{
+   PRINT("Async_tick()");
+
+   // TODO: Implement update-busy bits here to write real registers/buffers
+   // only update the registers if not in ADC noise or powersave sleep.
+
+   if(TSM && Timer_period != 1) // TSM only holds prescaler not direct clock
+      return;
+   Async_prescaler++;
+   if((Async_prescaler + 1) % Timer_period == 0)
+      Count();
+}
+
+void Async_change()
+//*****************************************
+// Called when TIMER2 is switching to/from asynchronous mode or when TIMER2
+// is waking up from power-down or standby while in asynchronous mode.
+{
+   // All TIMER2 registers except ASSE are set to UNKNOWN since they can
+   // become corrupt on real AVR hardware.
+   //REG(TCCRnA).x = 0;
+   //REG(TCCRnB).x = 0;
+   //REG(TCNTn).x = 0;
+   //REG(OCRnA).x = 0;
+   //REG(OCRnB).x = 0;
+   //OCRA_buffer.x = 0;
+   //OCRB_buffer.x = 0;
+
+   // If the 32.768kHz crystal oscillator was (re)enabled then schedule
+   // the first oscillator tick with REMIND_ME()
+   if(Async == ASY_32K && !Is_disabled()) {
+      REMIND_ME(PERIOD_32K, ++Tick_signature);
+      // TODO: Warn about waiting 1 sec for 32K oscillator to stabilize
+   }
+
+   // Otherwise, the oscillator may be getting disabled due to leaving
+   // asynchronous mode (AS2=0). Update Tick_signature to cancel any 32.768kHz
+   // oscillator ticks that may be pending.
+   else {
+      ++Tick_signature;
+   }
+}
+#endif
+
 void Go()
 //******
 // Schedule the next timer tick if the counter is not disabled and using the
 // internal clock source. Called on every timer tick, each time the counter
 // is re-enabled, and each time the clock source changes. The Tick_signature
 // is updated each item to cancel any already pending ticks which may no longer
-// be valid.
+// be valid. For TIMER2 in 32kHz asynchronous mode, this function never
+// schedules timer ticks.
 {
    if(Disabled) {
       // Track when I/O clock first became disabled
@@ -562,7 +684,7 @@ void Go()
    }
   
    if(Clock_source == CLK_INTERNAL) {
-      if(TSM && Timer_period != 1) // TSM only holds prescaler not direct IO clock
+      if(TSM && Timer_period != 1) // TSM only holds prescaler not direct clock
          return;
       uint cycles = Get_io_cycles() - Last_PSR;
       REMIND_ME2(Timer_period - (cycles % Timer_period), ++Tick_signature);      
@@ -832,23 +954,6 @@ void Update_clock_source()
    int newClockSource;
    int newPrescIndex = 0;
 
-#ifdef TIMER_2
-   // Check if asynchronous mode is enabled in ASSR
-   switch(REG(ASSR).get_field(6, 5)) {
-      case 1:  // EXCLK=0 AS2=1
-         Async = ASY_32K;
-         break;
-         
-      case 3:  // EXCLK=1 AS2=2
-         Async = ASY_EXT;
-         break;
-         
-      default: // AS2=0 or EXCLK/AS2 unknown
-         Async = ASY_NONE;
-         break;
-   }
-#endif   
-   
    int clkBits = REG(TCCRnB).get_field(2, 0);   // CSx bits field 2 - 0
    switch(clkBits) {
    	case 0:                            // Stopped
@@ -872,11 +977,14 @@ void Update_clock_source()
       default:                           // Internal or asynchronous clock
          newPrescIndex = clkBits;
          
+#ifdef TIMER_2
+         // Asynchronous mode overrides clock selection except STOP or UNKNOWN
          switch(Async) {
             case ASY_NONE: newClockSource = CLK_INTERNAL; break;
             case ASY_32K: newClockSource = CLK_32K; break; 
             case ASY_EXT: newClockSource = CLK_EXT; break; 
          }
+#endif
          
          break;
    }
