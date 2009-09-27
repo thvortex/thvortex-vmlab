@@ -38,3 +38,4 @@
 #define GDT_BUF      GADGET11
 #define GDT_LOG      GADGET12
 #define GDT_TOP      GADGET13
+#define GDT_CRPT     GADGET14
