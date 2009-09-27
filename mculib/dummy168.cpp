@@ -207,6 +207,10 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
 
    switch(pId) {
 
+      // TODO: If EICRA modified and level triggered interrupts selected, then
+      // trigger interrupts immediately if GET_LOGIC shows low for interrupt
+      // pins.
+
       case_register(MCUCR, 0x13)  // MCU Control Register
       //-------------------------------------------------
       // R/W bits = PUD, IVSEL,IVCE (mask = 0x13)
@@ -458,6 +462,10 @@ void On_reset(int pCause)
       case RESET_WATCHDOG: REG(MCUSR).set_bit(3, 1); break; // WDRF bit 3
    }
    REG(OSCCAL) = 0x3A;  // Load an arbitrary calibration value. This can be improved !!!
+   
+   // TODO: Load initial prescaler value if CLKDIV8 is set
+   
+   // TODO: Check for low-level INT and FLAG_LOCK
 }
  
 

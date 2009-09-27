@@ -28,6 +28,9 @@
 // Size of temporary string buffer for generating filenames and error messages
 #define MAXBUF 256
 
+// Return the number of elements in a statically defined array
+#define countof(x) (sizeof(x) / sizeof(*x))
+
 // On_notify() codes; shared by all peripheral modules. Be careful about inserting/removing
 // enums since the remaining ones are renumbered and this can cause compatibility issues
 // when some DLL files are not recompiled.
