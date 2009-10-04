@@ -219,6 +219,7 @@ void Update_clock_source();
 void Update_display();
 void Action_on_port(PORT, int, BOOL pMode = Counting_up);
 void Log(const char *pFormat, ...);
+void Warning(const char *pText, int pCategory, int pFlags);
 int Value(int);
 uint Get_io_cycles(void);
 bool Is_disabled(void);
@@ -268,7 +269,7 @@ WORD8 *On_register_read(REGISTER_ID pId)
 {
    // Registers cannot be read if the timer is disabled due to PRR
    if(PRR && !Async) {
-      WARNING("Register read while disabled by PRR", CAT_TIMER, WARN_MISC);
+      Warning("Register read while disabled by PRR", CAT_TIMER, WARN_MISC);
       return &UNKNOWN8;
    }
    
@@ -300,7 +301,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
 {
    // Registers cannot be written if the timer is disabled due to PRR
    if(PRR && !Async) {
-      WARNING("Register written while disabled by PRR", CAT_TIMER, WARN_MISC);
+      Warning("Register written while disabled by PRR", CAT_TIMER, WARN_MISC);
       return;
    }
 
@@ -312,7 +313,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
                Assr_text[i], hex(pData));
          
             if(REG(ASSR)[i] == 1) {
-               WARNING("Asynchronous register update already pending",
+               Warning("Asynchronous register update already pending",
                   CAT_TIMER, WARN_WRITE_BUSY);
             }
             
@@ -341,7 +342,7 @@ void Update_register(REGISTER_ID pId, WORD8 pData)
 #define case_register(r, m) \
    case r: {\
       if((pData.x & m) != m) { \
-         WARNING("Unknown bits (X) written into "#r" register", CAT_MEMORY, WARN_MEMORY_WRITE_X_IO); \
+         Warning("Unknown bits (X) written into "#r" register", CAT_MEMORY, WARN_MEMORY_WRITE_X_IO); \
          Log("Write register "#r": $??"); \
       } else { \
          Log("Write register "#r": $%02X", pData.d & m); \
@@ -389,7 +390,7 @@ void Update_register(REGISTER_ID pId, WORD8 pData)
           REG(TCNTn) = pData;
           Compare_blocked = true;
           if(Clock_source != CLK_STOP && Clock_source != CLK_UNKNOWN)
-             WARNING("TCNTn modified while running", CAT_TIMER, WARN_PARAM_BUSY);
+             Warning("TCNTn modified while running", CAT_TIMER, WARN_PARAM_BUSY);
        end_register
 
        case_register(OCRnA, 0xFF)  // Output Compare Register A
@@ -415,13 +416,16 @@ void Update_register(REGISTER_ID pId, WORD8 pData)
        //------------------------------------------------------
           // EXCLK should be changed before asynchronous mode enabled
           if(pData[6] != REG(ASSR)[6] && (pData[5] == 1 || REG(ASSR)[5] == 1)) {
-             WARNING("EXCLK bit in ASSR changed while AS2 bit is 1", CAT_TIMER,
+             Warning("EXCLK bit in ASSR changed while AS2 bit is 1", CAT_TIMER,
                 WARN_PARAM_BUSY);
           }
           
-          // TODO: Warn about pending update-busy bits and clear them if
-          // changing async mode
-          REG(ASSR) = pData & 0x60;
+          // Update register immediately because Async_change() depends on it.
+          // Only upsate EXCLK and AS2 and Async_change() will clear the 2UB
+          // if leaving async mode.
+          // TODO: We need to keep pending updates with 2UB bits Zero register
+          // in Async_change() when disabling
+          REG(ASSR) = (pData & 0x60) | (REG(ASSR) & 0x1F);
 
           // Check if asynchronous mode is enabled or disabled in ASSR
           int oldAsync = Async;
@@ -470,8 +474,7 @@ void On_remind_me(double pTime, int pAux)
    }
    
    // If using asynchronous 32kHz XTAL, always increment prescaler and schedule
-   // next oscillator tick. Increment counter only on prescaled ticks of the
-   // oscillator and only if the counter clock source is not stopped.
+   // next oscillator tick. Async_tick() takes care of incrementing the counter.
 #ifdef TIMER_2
    else if(Async == ASY_32K) {
       REMIND_ME(PERIOD_32K, ++Tick_signature);
@@ -553,7 +556,6 @@ void On_notify(int pWhat)
 {
    int wasDisabled;
 
-   // TODO: PRR only disables synchronous mode
    switch(pWhat) {
       case NTF_PRR0:                 // A 0 set in PPR register bit for TIMER 0
          wasDisabled = Is_disabled();
@@ -611,6 +613,20 @@ void On_sleep(int pMode)
 {
    int wasDisabled = Is_disabled();
 
+#ifdef TIMER_2
+   // Warn if any 2UB bits in ASSR are set (updates pending) and TIMER2 is
+   // entering a non IDLE sleep. The updates are not lost but they will not
+   // complete until the AVR comes out of SLEEP mode. This is the case even if
+   // entering power-save or ADC noice reduction mode where TIMER2 continues
+   // to run in async mode.
+   if(Sleep_mode == SLEEP_EXIT && pMode != SLEEP_IDLE) {
+      if(REG(ASSR).get_field(4, 0) > 0) {
+         Warning("Entering SLEEP with pending updates to asynchronous registers",
+            CAT_TIMER, WARN_PARAM_BUSY);
+      }
+   }
+#endif
+
    Sleep_mode = pMode;
 
    if(wasDisabled != Is_disabled()) {
@@ -632,7 +648,6 @@ void On_sleep(int pMode)
    }
    
    // TODO: TIMER2 checks:
-   // * check for pending reigster updates if going to ADC sleep/powersave
    // * check for interrupts on this TOSC clock cycle if going to ADC/powersave
 }
 
@@ -669,9 +684,9 @@ void Async_tick()
    Async_ticks++;
    
    // Allow pending TIMER2 asynchronous register updates to complete if the
-   // CPU is not in any sleep mode and at least 2 asynchronous clock ticks
-   // have elapsed.
-   if(Async && (Sleep_mode == SLEEP_EXIT || Sleep_mode == SLEEP_DONE)) {
+   // CPU is not in any sleep mode deeper than IDLE and at least 2
+   // asynchronous clock ticks have elapsed.
+   if(Async && (Sleep_mode == SLEEP_EXIT || Sleep_mode == SLEEP_IDLE)) {
       for(int i = 0; i < countof(ASSR_UB); i++) {
          if(REG(ASSR)[i] == 1) {         
             if(Async_ticks - Async_update[i].Ticks >= 2) {
@@ -704,10 +719,10 @@ void Async_change()
 // is going to sleep or waking up from power-down or standby while in
 // asynchronous mode.
 {
-   // Waking up from power-down or standy (and presumebly when entering
-   // either sleep mode) can corrupt all TIMER2 registers except for
-   // ASSR. They can optionally be set to UNKNOWN forcing the AVR software
-   // to re-initialize them.
+   // Switching the AS2 bit in ASSE as well as waking up from power-down or
+   // standy (and presumebly when entering either sleep mode) can corrupt
+   // all TIMER2 registers except for ASSR. They can optionally be set to
+   // UNKNOWN forcing the AVR software to re-initialize them.
    if(Debug & DEBUG_ASYNC_CORRUPT) {
       REG(TCCRnA).x = 0;
       REG(TCCRnB).x = 0;
@@ -718,11 +733,14 @@ void Async_change()
       OCRB_buffer.x = 0;
    }
 
-   // TODO: Check for pending updates if disabling
-   // TODO: Zero 2UB bits in ASSR if leaving async mode
-
-   // TODO: Check for power-save mode and warn too
-      
+   // If leaving async mode (AS2=0) then cancel any pending asynchronous
+   // register updates and clear 2UB bits.
+   if(Async == ASY_NONE && REG(ASSR).get_field(4, 0) > 0) {
+      Warning("Pending updates to asynchronous registers lost",
+         CAT_TIMER, WARN_PARAM_BUSY);
+      REG(ASSR) = REG(ASSR) & 0x60;
+   }
+                
    // TODO: Disconnect TOSC1/TOSC2 from digital input. Force TOSC1 as input
    // if using external clock. Drive TOSC2 with UNKNOWN...
 
@@ -734,13 +752,14 @@ void Async_change()
    }
 
    // Otherwise, the oscillator may be getting disabled due to leaving
-   // asynchronous mode (AS2=0) or going to sleep. Update Tick_signature to
-   // cancel any 32.768kHz oscillator ticks that may be pending.
+   // asynchronous mode (AS2=0), going to sleep, or switching to external
+   // clock signal on TOSC1. Update Tick_signature to cancel any 32.768kHz
+   // oscillator ticks that may be pending.
    else {
       ++Tick_signature;
    }
 }
-#endif
+#endif // #ifdef TIMER_2
 
 void Go()
 //******
@@ -790,10 +809,10 @@ void Action_on_port(PORT pPort, int pCode, BOOL pMode)
    
    if(rc == PORT_NOT_OUTPUT) {
       if(pPort == OCA) {
-         WARNING("OC0A enabled but pin not defined as output in DDR", CAT_TIMER,
+         Warning("OCnA enabled but pin not defined as output in DDR", CAT_TIMER,
             WARN_TIMERS_OUTPUT);
       } else if(pPort == OCB) {
-         WARNING("OC0B enabled but pin not defined as output in DDR", CAT_TIMER,
+         Warning("OCnB enabled but pin not defined as output in DDR", CAT_TIMER,
             WARN_TIMERS_OUTPUT);
       }
    }   
@@ -842,20 +861,24 @@ void Count()
       Action_on_port(OCB, Action_top_B, true);
    }
 
-   // TODO: TIMER2 async: output compare match is disabled if TCNT/OCRx updates
-   // are pending in ASSR
-
-   // Update output pins if a compare output match occurs. A CPU write to TNCT0
-   // blocks any output compare in the next timer clock cycle even if the
-   // counter was stopped at the time the TNCT0 write occurred.
-   if(!Compare_blocked) {
-      if(REG(TCNTn) == REG(OCRnA)) {
-         Action_on_port(OCA, Action_comp_A);
-         SET_INTERRUPT_FLAG(CMPA, FLAG_SET);
-      }
-      if(REG(TCNTn) == REG(OCRnB)) {
-         Action_on_port(OCB, Action_comp_B);
-         SET_INTERRUPT_FLAG(CMPB, FLAG_SET);
+   // In TIMER2 async mode output compare match is disabled if TCNT/OCRx
+   // updates are pending in ASSR
+#ifdef TIMER_2
+   if(REG(ASSR).get_field(4, 2) <= 0)
+#endif
+   {
+      // Update output pins if a compare output match occurs. A CPU write to
+      // TNCT0 blocks any output compare in the next timer clock cycle even if
+      // the counter was stopped at the time the TNCT0 write occurred.
+      if(!Compare_blocked) {
+         if(REG(TCNTn) == REG(OCRnA)) {
+            Action_on_port(OCA, Action_comp_A);
+            SET_INTERRUPT_FLAG(CMPA, FLAG_SET);
+         }
+         if(REG(TCNTn) == REG(OCRnB)) {
+            Action_on_port(OCB, Action_comp_B);
+            SET_INTERRUPT_FLAG(CMPB, FLAG_SET);
+         }
       }
    }
    Compare_blocked = false;
@@ -947,9 +970,9 @@ void Update_waveform()
       Waveform = newWaveform;
       Log("Updating waveform: %s (TOP=%s)", Wave_text[Waveform], Top_text[Top]);
       if(Clock_source != CLK_STOP)
-      	WARNING("Changing waveform while the timer is running", CAT_TIMER, WARN_PARAM_BUSY);
+      	Warning("Changing waveform while the timer is running", CAT_TIMER, WARN_PARAM_BUSY);
       if(Waveform == WAVE_RESERVED)
-         WARNING("Reserved waveform mode", CAT_TIMER, WARN_PARAM_RESERVED);
+         Warning("Reserved waveform mode", CAT_TIMER, WARN_PARAM_RESERVED);
    }
 }
 
@@ -1007,19 +1030,19 @@ void Update_compare_actions()
          break;
    }
    if(Action_comp_B == ACT_RESERVED) {
-      WARNING("Reserved combination of COM0Bx bits", CAT_TIMER, WARN_PARAM_RESERVED);
+      Warning("Reserved combination of COM0Bx bits", CAT_TIMER, WARN_PARAM_RESERVED);
    }
 
    // If any action on output compare pins, I need to be the owner
    int rc;
    rc = TAKEOVER_PORT(OCA, Action_comp_A != ACT_NONE);
    if(rc == PORT_NOT_OUTPUT) {
-      WARNING("OC0A enabled but pin not defined as output in DDR", CAT_TIMER,
+      Warning("OC0A enabled but pin not defined as output in DDR", CAT_TIMER,
          WARN_TIMERS_OUTPUT);
    }
    rc = TAKEOVER_PORT(OCB, Action_comp_B != ACT_NONE && Action_comp_B != ACT_RESERVED);
    if(rc == PORT_NOT_OUTPUT) {
-      WARNING("OC0B enabled but pin not defined as output in DDR", CAT_TIMER,
+      Warning("OC0B enabled but pin not defined as output in DDR", CAT_TIMER,
          WARN_TIMERS_OUTPUT);
    }
    
@@ -1083,7 +1106,7 @@ void Update_clock_source()
 
    if(newClockSource != Clock_source) {
       if(Clock_source != CLK_STOP && newClockSource != CLK_STOP)
-         WARNING("Changed clock source while running", CAT_TIMER, WARN_PARAM_BUSY);
+         Warning("Changed clock source while running", CAT_TIMER, WARN_PARAM_BUSY);
       Clock_source = newClockSource;
       Log("Updating clock source: %s", Clock_text[Clock_source]);
    }
@@ -1192,4 +1215,16 @@ void Log(const char *pFormat, ...)
 
       PRINT(strBuffer);
    }
+}
+
+void Warning(const char *pText, int pCategory, int pFlags)
+//*************************
+// Wrapper around the WARNING() function. If logging is enabled, this function
+// will also PRINT() the warning message. To avoid flooding the Messages window,
+// VMLAB will not print multiple consecutive WARNING()s with the same pCategory
+// and pFlages. Using PRINT() ensures that all warning messages are seen since
+// different warning messages may be using the same set of flags.
+{
+   WARNING(pText, pCategory, pFlags);
+   Log("WARNING: %s", pText);
 }
