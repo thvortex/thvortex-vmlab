@@ -129,6 +129,7 @@ DECLARE_VAR
    int _Async;             // Type of asynchronous mode operation (TIMER2 only)
    uint _Async_prescaler;  // Explicit prescaler count for asynchronous mode
 #ifdef TIMER_2
+   WORD8 _Tcnt_async;      // TCNT2 seens by MCU when TIMER2 in async mode
    uint _Async_ticks;      // Number of times Async_tick() has been called
    Async_update_t _Async_update[5]; // Pending register updates in async TIMER2
 #endif
@@ -158,6 +159,7 @@ END_VAR
 #define Debug VAR(_Debug)
 #define Async VAR(_Async)
 #define Async_prescaler VAR(_Async_prescaler)
+#define Tcnt_async VAR(_Tcnt_async)
 #define Async_ticks VAR(_Async_ticks)
 #define Async_update VAR(_Async_update)
 
@@ -273,7 +275,18 @@ WORD8 *On_register_read(REGISTER_ID pId)
       return &UNKNOWN8;
    }
    
-   // TODO: TIMER2 async: Check for reading TCNT2 after immediate wakeup
+   // If TIMER2 is in async mode, then reading TCNT2 returns the value from
+   // a synchronization register. If TIMER2 is waking up from power-save mode
+   // then reading TCNT2 immediately after wake up may return the stale value.
+#ifdef TIMER_2
+   if(Async && pId == TCNTn) {
+      if(!(Tcnt_async == REG(TCNTn))) {
+         Warning("Reading stale TCNT2 after exiting SLEEP",
+            CAT_TIMER, WARN_READ_BUSY);
+      }
+      return &Tcnt_async;
+   }
+#endif   
 
    // If OCRx double buffering is in effect, the CPU always reads the buffer
    // instead of the real registers.
@@ -440,8 +453,17 @@ void Update_register(REGISTER_ID pId, WORD8 pData)
           // 32.768kHz oscillator was enabled, then schedule a REMIND_ME()
           if(oldAsync != Async) {
              Async_change();
+                         
+             // If switching from synchronous to async mode, then update the
+             // TCNT2 view that the MCU sees when TIMER2 is in async mode. If
+             // TCNT2 was corrupted by Async_change() as per the GUI check box
+             // setting, then Tcnt_async will also be corrupted at this
+             // point.
+             if(Async) {
+                Tcnt_async = REG(TCNTn);
+             }
           }
-   
+          
           // Update everything since registers values may be unknown now
           Update_waveform();
           Update_compare_actions();
@@ -539,6 +561,9 @@ void On_reset(int pCause)
    Action_top_B = ACT_NONE;
    TAKEOVER_PORT(OCA, false);  // Release ports; a reset can happen
    TAKEOVER_PORT(OCB, false);  // at any time...
+#ifdef TIMER_2
+   TAKEOVER_PORT(XCLK, false);  // Release TOSC1 pins in case async mode used
+#endif
    Last_PSR = 0;
    Last_disabled = 0;
    Total_disabled = 0;
@@ -686,7 +711,7 @@ void Async_tick()
    // Allow pending TIMER2 asynchronous register updates to complete if the
    // CPU is not in any sleep mode deeper than IDLE and at least 2
    // asynchronous clock ticks have elapsed.
-   if(Async && (Sleep_mode == SLEEP_EXIT || Sleep_mode == SLEEP_IDLE)) {
+   if(Sleep_mode == SLEEP_EXIT || Sleep_mode == SLEEP_IDLE) {
       for(int i = 0; i < countof(ASSR_UB); i++) {
          if(REG(ASSR)[i] == 1) {         
             if(Async_ticks - Async_update[i].Ticks >= 2) {
@@ -696,7 +721,7 @@ void Async_tick()
          }
       }
    }
-
+   
    // Only increment prescaler if the reset is not asserted due to TSM
    if(!TSM)
       Async_prescaler++;
@@ -710,6 +735,16 @@ void Async_tick()
    if(Timer_period) {
       if((Async_prescaler + 1) % Timer_period == 0)
          Count();
+   }
+
+   // If asynchronous TIMER2 is running in either IDLE, ADC Noise reduction, or
+   // no sleep, then keep the TCNT2 register that the MCU sees updated with
+   // the real TCNT2 register. However, if timer is running in power-save
+   // mode, the synchronized TCNT2 seen by the MCU does not change. If the MCU
+   // wakes up and immediately reads TCNT2 after wake up then it will see the
+   // old stale value that TCNT2 had before boing to sleep.
+   if(Sleep_mode != SLEEP_POWERSAVE) {
+      Tcnt_async = REG(TCNTn);
    }
 }
 
@@ -741,9 +776,6 @@ void Async_change()
       REG(ASSR) = REG(ASSR) & 0x60;
    }
                 
-   // TODO: Disconnect TOSC1/TOSC2 from digital input. Force TOSC1 as input
-   // if using external clock. Drive TOSC2 with UNKNOWN...
-
    // If the 32.768kHz crystal oscillator was (re)enabled then schedule
    // the first oscillator tick with REMIND_ME()
    if(Async == ASY_32K && !Is_disabled()) {
@@ -758,6 +790,20 @@ void Async_change()
    else {
       ++Tick_signature;
    }
+
+   // If external clock selected, then TOSC1/TOSC2 is disconnected from the
+   // normal digital I/O circuitry. This is simulated by forcing both
+   // pins to input.
+   // TODO: The pins will still cause PCINT interrupts. 
+   // TODO: Notify DUMMY component so it can block PCINT interrupts on
+   // TOSC1/TOSC2 pins. DUMMY component can also issue warning if async
+   // mode enabled while external system clock is in use.
+   if (Async) {
+      TAKEOVER_PORT(XCLK, true, FORCE_INPUT | TOP_OWNER);
+   } else {
+      TAKEOVER_PORT(XCLK, false);
+   }
+   
 }
 #endif // #ifdef TIMER_2
 
@@ -1095,7 +1141,7 @@ void Update_clock_source()
          
          break;
    }
-      
+
    // Warn about a clock hot switching and log changes
    if(newPrescIndex != Prescaler_index) {
       Prescaler_index = newPrescIndex;
