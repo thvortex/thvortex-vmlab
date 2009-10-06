@@ -128,6 +128,7 @@ DECLARE_VAR
    int _Debug;             // To store debugging options
    int _Async;             // Type of asynchronous mode operation (TIMER2 only)
    uint _Async_prescaler;  // Explicit prescaler count for asynchronous mode
+   uint _Async_interrupt;  // Bitflags of any interrupts from last async tick
 #ifdef TIMER_2
    WORD8 _Tcnt_async;      // TCNT2 seens by MCU when TIMER2 in async mode
    uint _Async_ticks;      // Number of times Async_tick() has been called
@@ -159,6 +160,7 @@ END_VAR
 #define Debug VAR(_Debug)
 #define Async VAR(_Async)
 #define Async_prescaler VAR(_Async_prescaler)
+#define Async_interrupt VAR(_Async_interrupt)
 #define Tcnt_async VAR(_Tcnt_async)
 #define Async_ticks VAR(_Async_ticks)
 #define Async_update VAR(_Async_update)
@@ -215,6 +217,7 @@ void Go();                      // Function prototypes
 void Count();                   //
 void Async_tick();
 void Async_change();
+void Async_sleep_check(int pMode);
 void Update_waveform();
 void Update_compare_actions();
 void Update_clock_source();
@@ -327,6 +330,17 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
          
             if(REG(ASSR)[i] == 1) {
                Warning("Asynchronous register update already pending",
+                  CAT_TIMER, WARN_WRITE_BUSY);
+            }
+            
+            // The ATmega48/88/168 datasheet has an Errata for all revisions
+            // that warns about possible lost interrupts if any register
+            // is modified while in asynchronous mode and TCNT is 0xff. It's
+            // not clear from the datasheet if this also applies to overflow
+            // interrupts generated when TOP==OCRA or in PWM phase-correct
+            // mode when overflow interrupts occur on BOTTOM.
+            if(REG(TCNTn) == 0xff && pId != TCNTn) {
+               Warning("Errata: Asynchronous interrupts may be lost",
                   CAT_TIMER, WARN_WRITE_BUSY);
             }
             
@@ -571,6 +585,7 @@ void On_reset(int pCause)
    TSM = false;
    Async = ASY_NONE;
    Async_prescaler = 0;
+   Async_interrupt = 0;
    Update_display();
 }
 
@@ -650,10 +665,15 @@ void On_sleep(int pMode)
             CAT_TIMER, WARN_PARAM_BUSY);
       }
    }
+
+   // Check for duplicate interrupts that can occur in TIMER2 async mode
+   if(Async) {
+      Async_sleep_check(pMode);
+   }
 #endif
 
    Sleep_mode = pMode;
-
+   
    if(wasDisabled != Is_disabled()) {
 
       if(Is_disabled()) {
@@ -799,11 +819,39 @@ void Async_change()
    // TOSC1/TOSC2 pins. DUMMY component can also issue warning if async
    // mode enabled while external system clock is in use.
    if (Async) {
-      TAKEOVER_PORT(XCLK, true, FORCE_INPUT | TOP_OWNER);
+      TAKEOVER_PORT(XCLK, true, FORCE_INPUT);
    } else {
       TAKEOVER_PORT(XCLK, false);
    }
    
+}
+
+void Async_sleep_check(int pMode)
+//*****************************************
+// Entering power-save or ADC noise reduction sleep while in TIMER2 asynchronous
+// mode can potentially cause duplicate interrupts that immediately wake up
+// the MCU again. If entering one of the above sleep modes on the same TOSC
+// cycle that previously generated any interrupts, then immediately reschedule
+// them in this function. This problem will not occur if the interrupt is
+// masked, but in that case the function will still issue a warning since there
+// is no way for the TIMER2 component to check the mask registers.
+{
+   if(pMode != SLEEP_POWERSAVE && pMode != SLEEP_NOISE_REDUCTION) {
+      return;
+   }   
+   if(Async_interrupt) {
+      Warning("Possible duplicate asynchronous interrupts when re-entering SLEEP",
+         CAT_TIMER, WARN_MISC);
+   }
+   if(Async_interrupt & (1 << OVF)) {
+      SET_INTERRUPT_FLAG(OVF, FLAG_SET);
+   }
+   if(Async_interrupt & (1 << CMPA)) {
+      SET_INTERRUPT_FLAG(CMPA, FLAG_SET);
+   }
+   if(Async_interrupt & (1 << CMPB)) {
+      SET_INTERRUPT_FLAG(CMPB, FLAG_SET);
+   }   
 }
 #endif // #ifdef TIMER_2
 
@@ -871,6 +919,10 @@ void Count()
 // All compare match outputs and compare/overflow flag registers are delayed
 // by one timer cycle from when the match occured.
 {
+   // Track which interrupts have occurred on this timer cycle. Used by TIMER2
+   // Async_check_sleep() to simulate duplicate interrupts when entering sleep.
+   Async_interrupt = 0;
+
    // Do nothing on reserved/unknown waveform; we don't know the count sequence
    if(Waveform == WAVE_RESERVED || Waveform == WAVE_UNKNOWN) {
       return;
@@ -879,6 +931,7 @@ void Count()
    // Set overflow flag when count == TOP/MAX/BOTTOM depending on mode
    if(REG(TCNTn) == Value(Overflow)) {
       SET_INTERRUPT_FLAG(OVF, FLAG_SET);
+      Async_interrupt |= (1 << OVF);
    }
 
    // Reverse counter direction in PWM PC mode when it reaches TOP/BOTTOM/MAX
@@ -920,10 +973,12 @@ void Count()
          if(REG(TCNTn) == REG(OCRnA)) {
             Action_on_port(OCA, Action_comp_A);
             SET_INTERRUPT_FLAG(CMPA, FLAG_SET);
+            Async_interrupt |= (1 << CMPA);
          }
          if(REG(TCNTn) == REG(OCRnB)) {
             Action_on_port(OCB, Action_comp_B);
             SET_INTERRUPT_FLAG(CMPB, FLAG_SET);
+            Async_interrupt |= (1 << CMPB);
          }
       }
    }
