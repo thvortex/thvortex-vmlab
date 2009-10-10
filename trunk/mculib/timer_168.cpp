@@ -39,6 +39,9 @@ DECLARE_PINS
    MICRO_PORT(OCA, 1)     // Output Compare A  
    MICRO_PORT(OCB, 2)     // Output Compare B
    MICRO_PORT(XCLK, 3)    // External clock 
+#ifdef TIMER_N
+   MICRO_PORT(ICP, 4)     // Input Capture
+#endif
 END_PINS
 
 // Coding of work modes, status, clock sources, etc
@@ -55,17 +58,21 @@ enum {ASY_NONE, ASY_32K, ASY_EXT}; // Type of asynchronous mode operation
 // type array. (see "blackbox.h" for details). The WORD8 data is referred
 // with the REG(xxx) macro.
 //
-#ifdef TIMER_0
+#ifdef TIMER_N
+DECLARE_REGISTERS
+   TCCRnA, TCCRnB, TCCRnC, TCNTnH, TCNTn,
+   OCRnAH, OCRnA, OCRnBH, OCRnB, ICRnH, ICRn
+END_REGISTERS
+#else
+
 DECLARE_REGISTERS
    TCCRnA, TCCRnB, TCNTn, OCRnA, OCRnB
-END_REGISTERS
-#endif
-
 #ifdef TIMER_2
-DECLARE_REGISTERS
-   TCCRnA, TCCRnB, TCNTn, OCRnA, OCRnB, ASSR
-END_REGISTERS
+   ,ASSR
 #endif
+END_REGISTERS
+
+#endif // #ifdef TIMER_N
 
 // Involved interrupts. Use same order as in .INI file "Interrupt_map"
 // Like in  registers, these are IDs; what is important is the order.
@@ -74,6 +81,9 @@ END_REGISTERS
 //
 DECLARE_INTERRUPTS
    CMPA, CMPB, OVF
+#ifdef TIMER_N
+   ,CAPT
+#endif
 END_INTERRUPTS 
 
 // This type is used to keep track of elapsed CPU and I/O clock cycles. Using
@@ -198,6 +208,23 @@ REGISTERS_VIEW
    DISPLAY(TCNTn,  GDT_TCNTn,  *, *, *, *, *, *, *, *)
    DISPLAY(OCRnA,  GDT_OCRnA,  *, *, *, *, *, *, *, *)
    DISPLAY(OCRnB,  GDT_OCRnB,  *, *, *, *, *, *, *, *)
+END_VIEW
+#endif
+
+#ifdef TIMER_N
+REGISTERS_VIEW
+//           ID     .RC ID       b7        ...   bit names   ...             b0
+   DISPLAY(TCCRnA, GDT_TCCRnA, COMnA1, COMnA0, COMnB1, COMnB0, *, *, WGMn1, WGMn0)
+   DISPLAY(TCCRnB, GDT_TCCRnB, ICNCn, ICESn, *, WGMn3, WGMn2, CSn2, CSn1, CSn0)
+   DISPLAY(TCCRnC, GDT_TCCRnC, FOCnA, FOCnB, *, *, *, *, *, *)
+   DISPLAY(TCNTnH, GDT_TCNTnH, *, *, *, *, *, *, *, *)
+   DISPLAY(TCNTn,  GDT_TCNTnL, *, *, *, *, *, *, *, *)
+   DISPLAY(OCRnAH, GDT_OCRnAH, *, *, *, *, *, *, *, *)
+   DISPLAY(OCRnA,  GDT_OCRnAL, *, *, *, *, *, *, *, *)
+   DISPLAY(OCRnBH, GDT_OCRnBH, *, *, *, *, *, *, *, *)
+   DISPLAY(OCRnB,  GDT_OCRnBL, *, *, *, *, *, *, *, *)
+   DISPLAY(ICRnH,  GDT_ICRnH,  *, *, *, *, *, *, *, *)
+   DISPLAY(ICRn,   GDT_ICRnL,  *, *, *, *, *, *, *, *)
 END_VIEW
 #endif
 
