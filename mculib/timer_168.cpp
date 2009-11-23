@@ -1,11 +1,7 @@
 // =============================================================================
 // Common implementation code for the newest style AVR TIMER models. This file
 // is included by a different .cpp file for each of the timer types.
-//
-// Version History:
-// v0.1 05/24/09 - Initial public release by AMcTools
-// v1.0 09/15/09 - Fully implemented model
-//
+////
 // Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
 // Copyright (C) 2009 Wojciech Stryjewski <thvortex@gmail.com>
 //
@@ -74,6 +70,16 @@ END_REGISTERS
 
 #endif // #ifdef TIMER_N
 
+// Register access macros for handling 16 or 8 bit access to the TCNT, OCR,
+// and ICR registers. For TIMER0 and TIMER2, the REGHL() macro directly expands
+// to the REG() macro. For TIMER1, the REGHL() macro expands to access a WORD16HL
+// class instance that exists in any functions which require such 16-bit access.
+#ifdef TIMER_N
+#define REGHL(x) REG16_##x
+#else
+#define REGHL(x) REG(x)
+#endif
+
 // Involved interrupts. Use same order as in .INI file "Interrupt_map"
 // Like in  registers, these are IDs; what is important is the order.
 // It is "Interupt_map" who assigns the index into the actual interrupt name, 
@@ -124,8 +130,10 @@ DECLARE_VAR
    int _Top;               // Counter TOP value (0xFF, OCRA, etc)
    int _Overflow;          // Counter value that causes overflow interrupt
    int _Update_OCR;        // Counter value at which to update OCR double-buffer
-   WORD8 _OCRA_buffer;     // For OCR double buffering in PWM modes
-   WORD8 _OCRB_buffer;     //
+   WORD8 _TMP_buffer;      // For high byte access in 16-bit timers
+   WORD8 _READ_buffer;     // For high-byte access in On_register_read()
+   WORDSZ _OCRA_buffer;    // For OCR double buffering in PWM modes
+   WORDSZ _OCRB_buffer;    //
    int _Action_comp_A;     // None/Toggle/Set/Clear actions performed
    int _Action_comp_B;     //    at OCR match. 
    int _Action_top_A;      // Set/Clear actions performs when counter reaches
@@ -156,6 +164,8 @@ END_VAR
 #define Top VAR(_Top)
 #define Overflow VAR(_Overflow)
 #define Update_OCR VAR(_Update_OCR)
+#define TMP_buffer VAR(_TMP_buffer)
+#define READ_buffer VAR(_READ_buffer)
 #define OCRA_buffer VAR(_OCRA_buffer)
 #define OCRB_buffer VAR(_OCRB_buffer)
 #define Action_comp_A VAR(_Action_comp_A)
@@ -255,7 +265,7 @@ void Warning(const char *pText, int pCategory, int pFlags);
 int Value(int);
 uint Get_io_cycles(void);
 bool Is_disabled(void);
-void Update_register(REGISTER_ID, WORD8);
+void Update_register(REGISTER_ID, WORDSZ);
 
 //==============================================================================
 // Callback functions, On_xxx(...)
@@ -269,6 +279,7 @@ const char *On_create()                   // Mandatory function
 void On_destroy()                         //     "        "
 {
 }
+
 void On_simulation_begin()                //     "        "
 {
    //TRACE(true);  // Uncomment for tracing
@@ -280,6 +291,7 @@ void On_simulation_end()
    FOREACH_REGISTER(j){
       REG(j) = WORD8(0,0);      // All bits unknown (X)
    }
+   TMP_buffer.x = 0;
    OCRA_buffer.x = 0;
    OCRB_buffer.x = 0;
    PRR = false;
@@ -310,7 +322,7 @@ WORD8 *On_register_read(REGISTER_ID pId)
    // then reading TCNT2 immediately after wake up may return the stale value.
 #ifdef TIMER_2
    if(Async && pId == TCNTn) {
-      if(!(Tcnt_async == REG(TCNTn))) {
+      if(Tcnt_async != REG(TCNTn)) {
          Warning("Reading stale TCNT2 after exiting SLEEP",
             CAT_TIMER, WARN_READ_BUSY);
       }
@@ -318,6 +330,44 @@ WORD8 *On_register_read(REGISTER_ID pId)
    }
 #endif   
 
+#ifdef TIMER_N
+   // If reading the high byte of 16-bit TCNT and ICR registers, return the
+   // TMP_buffer instead. If reading the TCNT/ICR low byte then also copy the
+   // high byte into the TMP buffer.   
+   switch(pId) {
+      case TCNTnH:
+      case ICRnH:
+         return &TMP_buffer;
+      case TCNTn:
+         TMP_buffer = REG(TCNTnH);
+         break;
+      case ICRn:
+         TMP_buffer = REG(ICRnH);
+         break;
+   }
+   
+   // If OCRx double buffering is in effect, the CPU always reads the buffer
+   // instead of the real registers. Since the buffers are 16 bit, they have to
+   // be separated into the high and low bytes depending on which register
+   // is being accessed. Unlike TCNT and ICR, the OCR registers (or the buffers)
+   // are read directly without going through the TMP_buffer.
+   if(Update_OCR) {   
+      switch(pId) {
+         case OCRnAH:
+            READ_buffer = OCRA_buffer >> 8;
+            return &READ_buffer;
+         case OCRnBH:
+            READ_buffer = OCRB_buffer >> 8;
+            return &READ_buffer;
+         case OCRnA:
+            READ_buffer = OCRA_buffer;
+            return &READ_buffer;
+         case OCRnB:
+            READ_buffer = OCRB_buffer;
+            return &READ_buffer;
+      }
+   }
+#else 
    // If OCRx double buffering is in effect, the CPU always reads the buffer
    // instead of the real registers.
    if(Update_OCR) {
@@ -326,11 +376,10 @@ WORD8 *On_register_read(REGISTER_ID pId)
             return &OCRA_buffer;
          case OCRnB:
             return &OCRB_buffer;
-         default:
-            break;
       }
    }
-
+#endif
+   
    return NULL; // The normal register address will be read
 }
 
@@ -385,8 +434,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
    Update_register(pId, pData);
 }
 
-
-void Update_register(REGISTER_ID pId, WORD8 pData)
+void Update_register(REGISTER_ID pId, WORDSZ pData)
 //**************************************************
 // This function performs the real work of updating the register values. The
 // actual On_register_write() function acts as a frontend which calls
@@ -404,6 +452,23 @@ void Update_register(REGISTER_ID pId, WORD8 pData)
 
 #define end_register } break;
 
+#ifdef TIMER_N
+   // Proxies to allow 16-bit access through individual high and low regs
+   WORD16HL REG16_TCNTn(REG(TCNTnH), REG(TCNTn));
+   WORD16HL REG16_OCRnA(REG(OCRnAH), REG(OCRnA));
+   WORD16HL REG16_OCRnB(REG(OCRnBH), REG(OCRnB));
+
+   // If writing the low byte of 16-bit timer register, then combine this low
+   // byte with the high byte from TMP_buffer into a single 16-bit value.
+   switch(pId) {
+      case TCNTn:
+      case OCRnA:
+      case OCRnB:
+      case ICRn:
+         pData = (TMP_buffer << 8) | pData;
+   }      
+#endif
+
    switch(pId) {
 
        case_register(TCCRnA, 0xF3)      // Timer Control Register A
@@ -416,7 +481,6 @@ void Update_register(REGISTER_ID pId, WORD8 pData)
 
        case_register(TCCRnB, 0xCF)      // Timer Control Register B
        //---------------------------------------------------------
-
           REG(TCCRnB) = pData & 0x0F;   // FOCnA/FOCnB are write-only
           Update_waveform();
           Update_compare_actions();
@@ -439,10 +503,39 @@ void Update_register(REGISTER_ID pId, WORD8 pData)
 
        end_register
 
+#ifdef TIMER_N
+       //--------------------------------------------------
+       // Writing high byte of 16-bit register always updates TMP register
+       // Multiple case_register() statements are needed so each write
+       // operation can be printed to screen if logging enabled.
+       case_register(TCNTnH, 0xFF)
+          TMP_buffer = pData;
+          Update_display();
+       end_register
+       case_register(OCRnAH, 0xFF)
+          TMP_buffer = pData;
+          Update_display();
+       end_register
+       case_register(OCRnBH, 0xFF)
+          TMP_buffer = pData;
+          Update_display();
+       end_register
+       case_register(ICRnH, 0xFF)
+          // TODO: Is TMP access through ICRnH allowed even if ICR is read-only?
+          TMP_buffer = pData;
+          Update_display();
+       end_register
+
+       // TODO: Add ICR but only allow write if using ICR as top
+       
+#endif
+       
        case_register(TCNTn, 0xFF) // Timer Counter Register
        //--------------------------------------------------
-          REG(TCNTn) = pData;
+          REGHL(TCNTn) = pData;
           Compare_blocked = true;
+          // TODO: If TSM is on and clock perios is not 1 then the clock is not
+          // really running and this warning should not be printed
           if(Clock_source != CLK_STOP && Clock_source != CLK_UNKNOWN)
              Warning("TCNTn modified while running", CAT_TIMER, WARN_PARAM_BUSY);
        end_register
@@ -451,7 +544,7 @@ void Update_register(REGISTER_ID pId, WORD8 pData)
        //------------------------------------------------------
           OCRA_buffer = pData;    // All bits r/w no mask necessary
           if(!Update_OCR) {
-             REG(OCRnA) = pData;
+             REGHL(OCRnA) = pData;
           }
           Update_display(); // Buffer static control need update
        end_register
@@ -460,7 +553,7 @@ void Update_register(REGISTER_ID pId, WORD8 pData)
        //------------------------------------------------------
           OCRB_buffer = pData;
           if(!Update_OCR) {
-             REG(OCRnB) = pData;
+             REGHL(OCRnB) = pData;
           }
           Update_display();
        end_register
@@ -583,6 +676,7 @@ void On_reset(int pCause)
    FOREACH_REGISTER(j) {
       REG(j)= 0;
    }
+   TMP_buffer = 0;
    OCRA_buffer = 0;
    OCRB_buffer = 0;
    PRR = false;
@@ -718,9 +812,6 @@ void On_sleep(int pMode)
       Update_display();
       Go();
    }
-   
-   // TODO: TIMER2 checks:
-   // * check for interrupts on this TOSC clock cycle if going to ADC/powersave
 }
 
 void On_gadget_notify(GADGET pGadget, int pCode)
@@ -789,7 +880,7 @@ void Async_tick()
    // the real TCNT2 register. However, if timer is running in power-save
    // mode, the synchronized TCNT2 seen by the MCU does not change. If the MCU
    // wakes up and immediately reads TCNT2 after wake up then it will see the
-   // old stale value that TCNT2 had before boing to sleep.
+   // old stale value that TCNT2 had before going to sleep.
    if(Sleep_mode != SLEEP_POWERSAVE) {
       Tcnt_async = REG(TCNTn);
    }
@@ -946,6 +1037,13 @@ void Count()
 // All compare match outputs and compare/overflow flag registers are delayed
 // by one timer cycle from when the match occured.
 {
+#ifdef TIMER_N
+   // Proxies to allow 16-bit access through individual high and low regs
+   WORD16HL REG16_TCNTn(REG(TCNTnH), REG(TCNTn));
+   WORD16HL REG16_OCRnA(REG(OCRnAH), REG(OCRnA));
+   WORD16HL REG16_OCRnB(REG(OCRnBH), REG(OCRnB));
+#endif
+
    // Track which interrupts have occurred on this timer cycle. Used by TIMER2
    // Async_check_sleep() to simulate duplicate interrupts when entering sleep.
    Async_interrupt = 0;
@@ -956,7 +1054,7 @@ void Count()
    }
 
    // Set overflow flag when count == TOP/MAX/BOTTOM depending on mode
-   if(REG(TCNTn) == Value(Overflow)) {
+   if(REGHL(TCNTn) == Value(Overflow)) {
       SET_INTERRUPT_FLAG(OVF, FLAG_SET);
       Async_interrupt |= (1 << OVF);
    }
@@ -964,11 +1062,11 @@ void Count()
    // Reverse counter direction in PWM PC mode when it reaches TOP/BOTTOM/MAX
    if(Waveform == WAVE_PWM_PC) {
       if(Counting_up) {
-         if(REG(TCNTn) == Value(Top)) {
+         if(REGHL(TCNTn) == Value(Top)) {
             Counting_up = false;
          }
       } else {
-         if(REG(TCNTn) == 0) {
+         if(REGHL(TCNTn) == 0) {
             Counting_up = true;
          }
       }
@@ -982,7 +1080,7 @@ void Count()
    // around BOTTOM. The only exception to this rule is when OCR equals top.
    // In that case, the next code block will overwrite the port assignment with
    // the correct values. If using ACT_TOGGLE, this code block does nothing.
-   if(Waveform == WAVE_PWM_PC && REG(TCNTn) == Value(Top)) {
+   if(Waveform == WAVE_PWM_PC && REGHL(TCNTn) == Value(Top)) {
       Action_on_port(OCA, Action_top_A, true);
       Action_on_port(OCB, Action_top_B, true);
    }
@@ -997,12 +1095,12 @@ void Count()
       // TNCT0 blocks any output compare in the next timer clock cycle even if
       // the counter was stopped at the time the TNCT0 write occurred.
       if(!Compare_blocked) {
-         if(REG(TCNTn) == REG(OCRnA)) {
+         if(REGHL(TCNTn) == REGHL(OCRnA)) {
             Action_on_port(OCA, Action_comp_A);
             SET_INTERRUPT_FLAG(CMPA, FLAG_SET);
             Async_interrupt |= (1 << CMPA);
          }
-         if(REG(TCNTn) == REG(OCRnB)) {
+         if(REGHL(TCNTn) == REGHL(OCRnB)) {
             Action_on_port(OCB, Action_comp_B);
             SET_INTERRUPT_FLAG(CMPB, FLAG_SET);
             Async_interrupt |= (1 << CMPB);
@@ -1014,30 +1112,31 @@ void Count()
    // In fast PWM mode, all PWM cycles begin when counter reaches TOP. This is
    // true even when OCR equals TOP in which case this code block overwrites
    // the previous port assignment.
-   if(Waveform == WAVE_PWM_FAST && REG(TCNTn) == Value(Top)) {
+   if(Waveform == WAVE_PWM_FAST && REGHL(TCNTn) == Value(Top)) {
       Action_on_port(OCA, Action_top_A, false);     
       Action_on_port(OCB, Action_top_B, false);     
    }
    
    // If OCR double buffering in effect, then update real OCR registers when needed
    if(Update_OCR) {                         
-      if(REG(TCNTn) == Value(Update_OCR)) {
-         if(!(REG(OCRnA) == OCRA_buffer)) {
+      if(REGHL(TCNTn) == Value(Update_OCR)) {
+         if(REGHL(OCRnA) != OCRA_buffer) {
             Log("Updating double buffered register OCRnA: %s", hex(OCRA_buffer));
          }
-         if(!(REG(OCRnB) == OCRB_buffer)) {
+         if(REGHL(OCRnB) != OCRB_buffer) {
             Log("Updating double buffered register OCRnB: %s", hex(OCRB_buffer));
          }
-         REG(OCRnA) = OCRA_buffer;
-         REG(OCRnB) = OCRB_buffer;
+         REGHL(OCRnA) = OCRA_buffer;
+         REGHL(OCRnB) = OCRB_buffer;
       }
    }
 
    // Increment/decrement counter and clear after TOP was reached
-   if(Counting_up && REG(TCNTn) == Value(Top)) {
-      REG(TCNTn) = 0;
+   if(Counting_up && REGHL(TCNTn) == Value(Top)) {
+      REGHL(TCNTn) = 0;
    } else {
-      REG(TCNTn).d += Counting_up ? 1 : -1;
+      REGHL(TCNTn).d += Counting_up ? 1 : -1;
+      //REGHL(TCNTn).d = REGHL(TCNTn).d + Counting_up ? 1 : -1;
    }
 }
 
@@ -1264,6 +1363,11 @@ void Update_display()
    EnableWindow(GET_HANDLE(GDT_BUFA), Update_OCR);
    EnableWindow(GET_HANDLE(GDT_BUFB), Update_OCR);
    EnableWindow(GET_HANDLE(GDT_BUF), Update_OCR);
+
+#ifdef TIMER_N
+   // Output TMP (high byte for 16-bit registers) value in hex
+   SetWindowText(GET_HANDLE(GDT_TMP), hex(TMP_buffer));
+#endif
 }
 /* >>> Improvement: a set of variables, Handle_xxx, can be declared at DECLARE_VAR, to
        keep the windows handles just once at the beginning, instead of calling

@@ -449,6 +449,8 @@ void On_reset(int pCause)
 // Initialize registers to the desired value. Use the FOREACH macro for
 // a general initialization
 {
+   PRINT("On_reset");
+
    // Set the corresponding bit in the MCUSR according to the cause
    // Follow page #44 manual
    //

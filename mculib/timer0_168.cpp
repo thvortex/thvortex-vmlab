@@ -1,10 +1,6 @@
 // =============================================================================
 // Component Name: ATMega168 "TIMER0" peripheral.
 //
-// Version History:
-// v0.1 05/24/09 - Initial public release by AMcTools
-// v1.0 09/15/09 - Fully implemented model
-//
 // Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
 // Copyright (C) 2009 Wojciech Stryjewski <thvortex@gmail.com>
 //
@@ -28,10 +24,11 @@
 #include <stdio.h>
 
 #define IS_PERIPHERAL       // To distinguish from a normal user component
-#include <blackbox.h>
+#include "blackbox.h"
 #include "useravr.h"
 
 #include "timer0_168.h"
 #define TIMER_0
+#define WORDSZ WORD8
 
 #include "timer_168.cpp"
