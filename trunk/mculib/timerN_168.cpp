@@ -24,10 +24,11 @@
 #include <stdio.h>
 
 #define IS_PERIPHERAL       // To distinguish from a normal user component
-#include <blackbox.h>
+#include "blackbox.h"
 #include "useravr.h"
 
 #include "timerN_168.h"
 #define TIMER_N
+#define WORDSZ WORD16
 
 #include "timer_168.cpp"
