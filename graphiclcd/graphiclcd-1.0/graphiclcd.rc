@@ -1,0 +1,80 @@
+// =============================================================================
+// VMLAB user components (Windows resource sample)
+//
+// Copyright (c) 2005  Advanced Micro Tools
+// Compile with any standard Windows resources tool
+// =============================================================================
+//original author: Mrkaras
+//edited by: ThVortex
+/* This component simulates a graphic LCD based on the 
+   Copyright (C) 2009 Mrkaras.
+   see http://www.amctools.com/cgi-bin/yabb2/YaBB.pl?num=1250250728 for original posting	
+   
+   This library is free software; you can redistribute it and/or
+   modify it under the terms of the GNU Lesser General Public
+   License as published by the Free Software Foundation; either
+   version 3 of the License, or (at your option) any later version.
+
+   This library is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   Lesser General Public License for more details.
+
+   You should have received a copy of the GNU Lesser General
+   Public License along with this library; if not, write to the
+   Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+   Boston, MA 02110-1301 USA */
+   
+#include <blackbox.h>
+
+// Syntax, to add/modify new controls
+// **********************************
+//
+// CONTROL <text>, <gadget ID>, <class>, <styles>, <left>, <top>, <width>, <height>
+//
+//    <text>: Any text; this will be displayed in the control (if applies).
+//    <gadget ID>: A value, GADGET0 to GADGET31, or -1 for non-modifiable controls
+//       (decorations, texts, etc)
+//    <class>: A Win32 standard control class name: "button", "static", "listbox", etc.
+//       or... own custom-class name (for advanced Win32 users)
+//    <styles>: A valid Win32 attribute/style for the control.
+//    <left>, <top>, <width>, <height>: Coordinates in dialog units (not pixels!)
+WINDOW_USER_1 DIALOG 0, 0, WIDTH, 102
+STYLE WS_CHILD | WS_VISIBLE
+FONT 8, "MS Sans Serif"
+{
+   CONTROL "", EXPAND_FRAME, "button", BS_GROUPBOX | WS_CHILD | WS_VISIBLE | WS_GROUP, 2, 0, WIDTH - 5, 99 
+   CONTROL "", EXPAND_BUTTON, "button", BS_AUTOCHECKBOX | BS_PUSHLIKE | WS_CHILD | WS_VISIBLE, 7, 0, 8, 8
+ 
+   CONTROL "Left", -1, STATIC, SS_CENTER | WS_CHILD | WS_VISIBLE, 210, 12, 13, 10 
+   CONTROL "Right", -1, STATIC, SS_CENTER | WS_CHILD | WS_VISIBLE, 226, 12, 18, 10 
+   CONTROL "X", -1, STATIC, SS_RIGHT | WS_CHILD | WS_VISIBLE, 196, 25, 11, 10 
+   CONTROL "Page", -1, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE, 182, 25, 19, 10 
+   CONTROL "$??", GADGET3, STATIC, SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 210, 24, 15, 10 
+   CONTROL "$??", GADGET7, STATIC, SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 228, 24, 15, 10 
+   CONTROL "Y", -1, STATIC, SS_RIGHT | WS_CHILD | WS_VISIBLE, 196, 37, 11, 10 
+   CONTROL "Addr", -1, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE, 182, 37, 18, 10 
+   CONTROL "$??", GADGET2, STATIC, SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 210, 36, 15, 10 
+   CONTROL "$??", GADGET6, STATIC, SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 228, 36, 15, 10 
+   CONTROL "Z", -1, STATIC, SS_RIGHT | WS_CHILD | WS_VISIBLE, 196, 49, 11, 10 
+   CONTROL "Start", -1, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE, 182, 49, 20, 10 
+   CONTROL "$??", GADGET11, STATIC, SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 210, 48, 15, 10 
+   CONTROL "$??", GADGET12, STATIC, SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 228, 48, 15, 10 
+   CONTROL "DR", -1, STATIC, SS_RIGHT | WS_CHILD | WS_VISIBLE, 196, 61, 11, 10 
+   CONTROL "Out", -1, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE, 182, 61, 13, 10 
+   CONTROL "$??", GADGET13, STATIC, SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 210, 60, 15, 10 
+   CONTROL "$??", GADGET14, STATIC, SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 228, 60, 15, 10 
+   CONTROL "Display:", -1, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE, 182, 73, 26, 10 
+   CONTROL "Off", GADGET1, STATIC, SS_CENTER | WS_CHILD | WS_VISIBLE, 210, 73, 15, 10 
+   CONTROL "Off", GADGET5, STATIC, SS_CENTER | WS_CHILD | WS_VISIBLE, 228, 73, 15, 10 
+   CONTROL "Status:", -1, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE, 182, 85, 26, 10 
+   CONTROL "?", GADGET4, STATIC, SS_CENTER | WS_CHILD | WS_VISIBLE, 208, 85, 18, 10 
+   CONTROL "?", GADGET8, STATIC, SS_CENTER | WS_CHILD | WS_VISIBLE, 226, 85, 18, 10 
+
+   CONTROL "", GADGET10, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 12, 128, 64, WS_EX_CLIENTEDGE | WS_EX_STATICEDGE
+
+}
+
+
+
+
