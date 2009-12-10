@@ -145,17 +145,28 @@ typedef unsigned long ADDRESS;
 #if !defined(_WORD8) // Added to allow external include
 namespace PRIVATE {
    // Forward declarations needed by typecasts and class definitions
+   template <typename T> class WORDX;
    template <typename T> class WORDN;
-   template <typename Tl, typename Ts> class WORDHL;
+   template <typename Tl, typename Tw> class WORDHL;
+   template<typename T> class WORDLE;
+   template<typename T> class WORDBE;
 }
 
-// Publicly visible classes for user components
-typedef PRIVATE::WORDN<unsigned char> WORD8;
-typedef PRIVATE::WORDN<unsigned short> WORD16;
-typedef PRIVATE::WORDN<unsigned int> WORD32;
-typedef PRIVATE::WORDHL<WORD16, WORD8> WORD16HL;
-typedef PRIVATE::WORDHL<WORD32, WORD16> WORD32HL;
-typedef PRIVATE::WORDHL<WORD32, WORD16HL> WORD32HL16;
+// Publicly visible primitive WORD classes for user components
+typedef PRIVATE::WORDX< PRIVATE::WORDN<unsigned char> > WORD8;
+typedef PRIVATE::WORDX< PRIVATE::WORDN<unsigned short> > WORD16;
+typedef PRIVATE::WORDX< PRIVATE::WORDN<unsigned int> > WORD32;
+
+// Publicly visible little-endian WORD classes for user components
+typedef PRIVATE::WORDX< PRIVATE::WORDHL<unsigned short, PRIVATE::WORDLE<WORD8> > > WORD16LE;
+typedef PRIVATE::WORDX< PRIVATE::WORDHL<unsigned int, PRIVATE::WORDLE<WORD16LE> > > WORD32LE;
+typedef PRIVATE::WORDX< PRIVATE::WORDHL<unsigned int, PRIVATE::WORDLE<WORD16> > > WORD32LE16;
+
+// Publicly visible big-endian WORD classes for user components
+typedef PRIVATE::WORDX< PRIVATE::WORDHL<unsigned short, PRIVATE::WORDBE<WORD8> > > WORD16BE;
+typedef PRIVATE::WORDX< PRIVATE::WORDHL<unsigned int, PRIVATE::WORDBE<WORD16BE> > > WORD32BE;
+typedef PRIVATE::WORDX< PRIVATE::WORDHL<unsigned int, PRIVATE::WORDBE<WORD16> > > WORD32BE16;
+
 #endif // WORD8
 
 // Pin declaration macros
@@ -605,40 +616,42 @@ void Destroy()
 
 namespace PRIVATE {
 
-template <typename Tx, typename Td, typename Tp>
-class WORDX
+template <typename T>
+class WORDX : public T
 //*********
 // Generic class to model any numeric type that can have undefined bit status
-// Template parameters "Tx" and "Td" specify the types of the "x" and "d"
-// variables, and "Tp" specifies the primitive integer type of the same size
-// as "Tx" and "Td". All intermediate bitwise operations are carried out as
-// WORD32 instances to avoid bit truncation. When smaller values are converted
-// to larger ones (such as the intermediate WORD32), the upper bits are set
-// to a known state and a value of 0.
-{
-private:
-
-protected:
-   inline WORDX(const Tx &pX, const Td &pD) : x(pX), d(pD) {}
-   //******************************
-   // Constructor used by derived classes to initialize "x" and "d" variables
-   
+// The template parameter "T" specifies the base class which controls actual
+// data layout in memory. The base class also provides the public d() and x()
+// methods used by this class to access the data and known bit flags. Finally,
+// the base class provides a "TYPE" typedef representing the primitive data
+// type (i.e. unsigned char) which this class represents. All intermediate
+// bitwise operations are carried out as WORD32 instances to avoid bit
+// truncation. When smaller values are converted to larger ones (such as the
+// intermediate WORD32), the upper bits are set to a known state and a value
+// of 0.
+{   
 public:
-   typedef Tp TYPE;    // Publicly visible primitive type for "x" and "d"
-   typedef Tx X;   // Publicly visible actual "x" and "d" types needed by
-   typedef Td D;   // PROXY class and for a user's pointer types.
+
+   inline WORDX() : T(0, 0) {}
+   //**************************************
+   // Default constructor. All bits set to UNKNOWN.
+
+   inline WORDX(T::TYPE pInteger) : T(-1, pInteger) {}
+   //**************************************
+   // Constructor, upon an integer. Bits are known.
    
-	Tx x;  // Says, by bit, if data is defined: 1=defined; 0=undefined
-	Td d;  // The real data   
+   inline WORDX(T::TYPE pDefined, T::TYPE pData) : T(pDefined, pData) {}
+   //**************************************
+   // Constructor, upon two values
 
    template<typename U>
-   inline operator WORDN<U> () const
+   inline operator WORDX<U> () const
    //******************************
-   // Generic type cast operator for converting to other WORDN bit widths
+   // Generic type cast operator to other WORDX bit widths/layouts
    {
       // "i64" prevents compile warnings about shift offsets for WORD32
-      WORDN<U>::TYPE mask = -1i64 << (sizeof(TYPE) * 8);
-      return WORDN<U>(x | mask, d);
+      WORDX<U>::TYPE mask = -1i64 << (sizeof(TYPE) * 8);
+      return WORDX<U>(x() | mask, d());
    }
 
    LOGIC get_bit(UINT pBit) const
@@ -647,8 +660,8 @@ public:
    {
       TYPE mask = 1 << pBit;
 
-      if(x & mask) {
-         return (d & mask) ? 1 : 0;
+      if(x() & mask) {
+         return (d() & mask) ? 1 : 0;
       } else {
          return UNKNOWN;
       } 
@@ -658,7 +671,7 @@ public:
    //********************************
    // Toggles a given bit. Does not change x value
    {
-      d ^= (1 << pBit);
+      d(d ^ (1 << pBit));
    }
 
    void set_bit(UINT pBit, LOGIC pValue)
@@ -668,13 +681,13 @@ public:
       TYPE mask = 1 << pBit;
 
       if(pValue == 0) {
-         x = x | mask;
-         d = d & ~mask;
+         x(x() | mask);
+         d(d() & ~mask);
       } else if(pValue == 1) {
-         x = x | mask;
-         d = d | mask;
+         x(x() | mask);
+         d(d() | mask);
       } else if(pValue == UNKNOWN) {
-         x = x & ~mask;
+         x(x() & ~mask);
       }
    }
 
@@ -682,8 +695,8 @@ public:
    //*****************************************
    // Extract a n-bits field from pLSB to pMSB.
    {
-      TYPE data = d >> pLsb;   
-      TYPE known = x >> pLsb;
+      TYPE data = d() >> pLsb;   
+      TYPE known = x() >> pLsb;
       TYPE mask = (1 << (pMsb - pLsb + 1)) - 1;
 
       if(mask != (known & mask)) {
@@ -701,59 +714,59 @@ public:
    {
       TYPE mask = ((1 << (pMsb - pLsb + 1)) - 1) << pLsb;
 
-      d = d & ~mask;
+      d(d() & ~mask);
       if(pValue < 0) {
-         x = x & ~mask;
+         x(x() & ~mask);
       } else {   
-         x = x | mask;
-         d = d | ((pValue << pLsb) & mask);
+         x(x() | mask);
+         d(d() | ((pValue << pLsb) & mask));
       }
    }
 
-   WORD32 operator & (const WORD32 &p) const
+   const WORD32 operator & (const WORD32 &p) const
    //*************************************
    {
-      return WORD32((x & p.x) | (~d & x) | (~p.d & p.x), d & p.d );
+      return WORD32( (x() & p.x()) | (~d() & x()) | (~p.d() & p.x()), d() & p.d() );
    }
 
-   WORD32 operator | (const WORD32 &p) const
+   const WORD32 operator | (const WORD32 &p) const
    //*************************************
    {
-      return WORD32( (x & p.x) | (d & x) | (p.d & p.x), d | p.d );
+      return WORD32( (x() & p.x()) | (d() & x()) | (p.d() & p.x()), d() | p.d() );
    }
    
-   WORD32 operator ^ (const WORD32 &p) const
+   const WORD32 operator ^ (const WORD32 &p) const
    //**************************************
    {
-      return WORD32(x & p.x, d ^ p.d);
+      return WORD32( x() & p.x(), d() ^ p.d() );
    }
 
-   WORD32 operator << (int pInteger) const
+   const WORD32 operator << (int pInteger) const
    //**************************************
    {
       UINT mask = (1 << pInteger) - 1;
-      return WORD32((x << pInteger) | mask, d << pInteger);
+      return WORD32( (x() << pInteger) | mask, d() << pInteger );
    }
 
-   WORD32 operator >> (int pInteger) const
+   const WORD32 operator >> (int pInteger) const
    //**************************************
    {
       UINT mask = -1 >> pInteger;
-      return WORD32(~mask | (x >> pInteger), d >> pInteger);
+      return WORD32( ~mask | (x() >> pInteger), d() >> pInteger );
    }
    
-   BOOL operator == (const WORD32 &p) const
+   bool operator == (const WORD32 &p) const
    //**************************************
    {
       // (unsigned) stops a compiler warning about signed/unsigned comparison
-      return p.d == (unsigned)d && known() && p.known();
+      return p.d() == (unsigned)d() && known() && p.known();
    }
-
-   BOOL operator != (const WORD32 &p) const
+   
+   bool operator != (const WORD32 &p) const
    //**************************************
    {  
       // (unsigned) stops a compiler warning about signed/unsigned comparison
-      return p.d != (unsigned)d && known() && p.known();
+      return p.d() != (unsigned)d() && known() && p.known();
    }
    
    inline LOGIC operator [] (UINT pIndex) const
@@ -765,146 +778,117 @@ public:
    inline BOOL known() const
    //**************************************
    {
-      return x == ((TYPE) -1);
+      return x() == ((TYPE) -1);
    }
 };
-   
+
 template <typename T>
-class WORDN : public WORDX<T, T, T>
+class WORDN
 //*********
-// Generic class which extends the WORDX class and instantiates it with a
-// primitive unsigned integer type "T". The WORD8, WORD16, and WORD32 are
-// instances of this class.
-{
-public:
-
-   inline WORDN() : WORDX<T, T, T>(0, 0) {}
-   //**************************************
-   // Default constructor. All bits set to UNKNOWN.
-
-   inline WORDN(T pInteger) : WORDX<T, T, T>(-1, pInteger) {}
-   //**************************************
-   // Constructor, upon an integer. Bits are known.
-   
-   inline WORDN(T pDefined, T pData) : WORDX<T, T, T>(pDefined, pData) {}
-   //**************************************
-   // Constructor, upon two values
-};
-
-template <typename Ts>
-class REFX
-//*********
-// Helper for "Tf" parameter in PROXYHL to retrieve "x" field reference
-{
-public:
-   static inline Ts::X &field(Ts &pData) { return pData.x; }
-};
-
-template <typename Ts>
-class REFD
-//*********
-// Helper for "Tf" parameter in PROXYHL to retrieve "d" field reference
-{
-public:
-   static inline Ts::D &field(Ts &pData) { return pData.d; }
-};
-
-template <typename Tl, typename Ts, typename Tf>
-class PROXYHL
-//*********
-// Proxy helper classes used by the WORDHL class to retrieve either a
-// larger (e.g. 16-bit) "x" or "d" word from two shorter (e.g. 8-bit)
-// high and low words. Template parameter "Tl" is the larger word
-// type (e.g. WORD16 or WORD32), "Ts" is the smaller WORDX type (e.g.
-// WORD8 or a WORD16HL type), and "Tf" is a helper class type (REFX
-// or REFD) to control whether this PROXY instance retrieves the "x"
-// or "d" field from the two shorter words.
+// Base class for WORDX to represent a "native" data layout using primitive
+// types (e.g. unsigned int) to hold the data and known bit status. The
+// template paramater "T" specifies the primitive type.
 {
 private:
-   typedef Tl::TYPE Tp;    // Primitive type associated with larger word
-   Ts &High, &Low;         // References to the high and low primitive
+	T _x;  // Says, by bit, if data is defined: 1=defined; 0=undefined
+	T _d;  // The real data
+
+protected:
+   inline WORDN(T pDefined, T pData) : _x(pDefined), _d(pData) {}
+   //******************************
+   // Constructor used by WORDX class to initialize "x" and "d" variables
    
-   inline PROXYHL(Ts &pHigh, Ts &pLow) : High(pHigh), Low(pLow) {}
-   //**************************************
-   // Constructor used by WORDHL to initialize the word references
-   
-   inline PROXYHL(const PROXYHL &pOther) : High(pOther.High), Low(pOther.Low) {}
-   //**************************************
-   // Copy constructor used by WORDX when passing initializer from WORDHL
-
-   // Only internal classes are allowed to create PROXYHL instances
-   friend WORDHL<Tl, Ts>; 
-   friend WORDX<PROXYHL<Tl, Ts, REFX<Ts> >, PROXYHL<Tl, Ts, REFD<Ts> >, Tl::TYPE>;
-
-public:   
-
-   inline PROXYHL &operator = (Tp pInteger)
-   //**************************************
-   // Integer assignments to PROXY class are forwarded to high/low words
-   {
-      Tf::field(High) = pInteger >> (sizeof(Ts::TYPE) * 8);
-      Tf::field(Low) = pInteger;
-      return *this;
-   }
-
-   inline operator Tp () const
-   //**************************************
-   // Type cast operator for converting to literal integer
-   {
-      Tp hi = Tf::field(High) << (sizeof(Ts::TYPE) * 8);
-      return hi | Tf::field(Low);
-   }
-      
-   //**************************************
-   // Shorthand assignments to make PROXY behave like primitive integer type
-   inline PROXYHL &operator += (const Tp &p) { *this = *this + p; return *this; }
-   inline PROXYHL &operator -= (const Tp &p) { *this = *this - p; return *this; }
-   inline PROXYHL &operator *= (const Tp &p) { *this = *this * p; return *this; }
-   inline PROXYHL &operator /= (const Tp &p) { *this = *this / p; return *this; }
-   inline PROXYHL &operator %= (const Tp &p) { *this = *this % p; return *this; }
-   inline PROXYHL &operator ^= (const Tp &p) { *this = *this ^ p; return *this; }
-   inline PROXYHL &operator &= (const Tp &p) { *this = *this & p; return *this; }
-   inline PROXYHL &operator |= (const Tp &p) { *this = *this | p; return *this; }
-   inline PROXYHL &operator <<= (const Tp &p) { *this = *this << p; return *this; }
-   inline PROXYHL &operator >>= (const Tp &p) { *this = *this >> p; return *this; }
-};
-
-template <typename Tl, typename Ts>
-class WORDHL :
-   public WORDX<PROXYHL<Tl, Ts, REFX<Ts> >, PROXYHL<Tl, Ts, REFD<Ts> >, Tl::TYPE>
-//*********
-// The WORDHL class behaves like a larger WORDN data type (e.g. 16-bit) but
-// all read/write access to the WORDHL class are transparently forwarded to
-// a pair of smaller WORDN data types (e.g. 8-bit). Template parameter "Tl"
-// is the larger word type (e.g. WORD16) and "Ts" is the smaller word type
-// (e.g. WORD8).
-{
 public:
-
-   inline WORDHL(Ts &pHigh, Ts &pLow) : 
-      WORDX<X, D, Tl::TYPE> (X(pHigh, pLow), D(pHigh, pLow)) {}
-   //*************
-   // Constructor to initialize with smaller high/low word references
-
-   inline WORDHL &operator = (const WORDN<Tl::TYPE> &p)
-   //*************
-   // Assignment operator from WORDN instance of the same bit depth
-   {
-      x = p.x;
-      d = p.d;
-      return *this;
-   }
-
-   inline WORDHL &operator = (const WORDHL &p)
-   //*************
-   // Assignment from same WORDHL class type requires explicit typecasts
-   {
-      x = (Tl::TYPE) p.x;
-      d = (Tl::TYPE) p.d;
-      return *this;
-   }
-};
+   typedef T TYPE; // Publicly visible primitive type used by x() and d()
    
+   //******************************
+   // Access methods needed by WORDX class to read/write the x/d fields
+   inline T d() const { return _d; }
+   inline T x() const { return _x; }
+   inline void d(T pInteger) { _d = pInteger; }
+   inline void x(T pInteger) { _x = pInteger; }
+};
+
+template<typename T>
+class WORDLE
+//*********
+// Helper class used by WORDHL to provide little-endian data layout. Template
+// parameter "T" is a WORDX type used to create the larger WORDHL instance.
+{
+   public:
+      typedef T::TYPE TYPE;
+      T Low;
+      T High;
+};
+
+template<typename T>
+class WORDBE
+//*********
+// Helper class used by WORDHL to provide big-endian data layout. Template
+// parameter "T" is a WORDX type used to create the larger WORDHL instance.
+{
+   public:
+      typedef T::TYPE TYPE;
+      T High;
+      T Low;
+};
+
+template <typename Tp, typename Tw>
+class WORDHL
+//*********
+// Base class for WORDX to represent a larger data type (e.g. 16-bit) by using
+// a pair of smaller WORDX data types (typically WORD8) arranged in either a
+// little or big endian fasion. An array of WORD8 datatypes can be cast to
+// a pointer of this type to reinterpret the WORD8 array as a larger data type.
+// This class may also be instantiated by itself, and then converted to a
+// WORD8 array pointer, allowing access to the individual bytes making up the
+// larger WORDHL data type. Template parameter "Tp" specifies the primitive
+// type (e.g. unsigned short) of the larger data type. Parameter "Tw" is
+// either the WORDLE or WORDBE class to specify the little/big endian layout
+// and specify the smaller WORDX data type.
+{
+private:
+   Tw Word; // Underlying little/big endian data layout
+
+protected:
+   inline WORDHL(Tp pDefined, Tp pData) { x(pDefined); d(pData); }
+   //******************************
+   // Constructor used by WORDX class to initialize "word" array
+
+public:
+   typedef Tp TYPE; // Publicly visible primitive type used by x() and d()
+
+   inline void d(Tp pInteger)
+   //**************************************
+   // Integer assignments to WORDHL class are forwarded to high/low words
+   {
+      Word.High.d(pInteger >> (sizeof(Tw::TYPE) * 8));
+      Word.Low.d(pInteger);
+   }
+
+   inline void x(Tp pInteger)
+   //**************************************
+   // Integer assignments to WORDHL class are forwarded to high/low words
+   {
+      Word.High.x(pInteger >> (sizeof(Tw::TYPE) * 8));
+      Word.Low.x(pInteger);
+   }
+   
+   inline Tp d() const
+   //**************************************
+   // Converting to literal integer form high/low words
+   {
+      return (Word.High.d() << (sizeof(Tw::TYPE) * 8)) | Word.Low.d();
+   }
+
+   inline Tp x() const
+   //**************************************
+   // Converting to literal integer form high/low words
+   {
+      return (Word.High.x() << (sizeof(Tw::TYPE) * 8)) | Word.Low.x();
+   } 
+};
+
 } // namespace PRIVATE
 
 // Allow binary operations with integer on left hand side
@@ -913,7 +897,6 @@ inline WORD32 operator & (UINT pL, const WORD32 &pR) { return pR & pL; }
 inline WORD32 operator ^ (UINT pL, const WORD32 &pR) { return pR ^ pL; }
 inline BOOL operator == (UINT pL, const WORD32 &pR) { return pR == pL; }
 inline BOOL operator != (UINT pL, const WORD32 &pR) { return pR != pL; }
-
 #endif // if not _WORD8_LINKED
 
 #endif // #ifdef(RC_INVOKED)
