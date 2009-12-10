@@ -44,7 +44,7 @@ char *hex(const WORD8 &pData)
    static char strBuffer[8];
 
    if(pData.known())
-      snprintf(strBuffer, 8, "$%02X", pData.d);
+      snprintf(strBuffer, 8, "$%02X", pData.d());
    else
       snprintf(strBuffer, 8, "$??");
    
@@ -60,9 +60,9 @@ char *hex(const WORD16 &pData)
    static char strBuffer[8];
 
    if(pData.known())
-      snprintf(strBuffer, 8, "$%04X", pData.d);
+      snprintf(strBuffer, 8, "$%04X", pData.d());
    else
-      snprintf(strBuffer, 8, "$?");
+      snprintf(strBuffer, 8, "$????");
    
    return strBuffer;
 }

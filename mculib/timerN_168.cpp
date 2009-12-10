@@ -28,7 +28,11 @@
 #include "useravr.h"
 
 #include "timerN_168.h"
+
 #define TIMER_N
 #define WORDSZ WORD16
+#define TCCRnB_MASK 0xDF
+#define TCCRnB_RW_MASK 0xDF
+#define REGHL(x) (*((WORD16LE *) &REG(x)))
 
 #include "timer_168.cpp"
