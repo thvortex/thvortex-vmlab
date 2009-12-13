@@ -53,8 +53,8 @@ char *hex(const WORD8 &pData)
 
 char *hex(const WORD16 &pData)
 //*******************
-// Return a hex string representation of a word16 value. if the word16 contains any unknown
-// bits then return "$????". because this function uses a static buffer, the returned string
+// Return a hex string representation of a WORD16 value. If the WORD16 contains any unknown
+// bits then return "$????". Because this function uses a static buffer, the returned string
 // is only valid until the next call to this function.
 {
    static char strBuffer[8];
