@@ -58,10 +58,21 @@ enum {
    VAL_NONE, VAL_OCRA, VAL_ICR, VAL_00, VAL_FF, VAL_1FF, VAL_3FF, VAL_FFFF
 };
 
+// Mask values for OCR registers based on the VAL_XXX used as counter TOP.
+// When using a fixed counter TOP value with 16-bit timers, writes to the
+// OCR registers are masked against unused bits
+const int OCR_MASK[] = {
+   0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFF, 0x1FF, 0x3FF, 0xFFFF
+};
+
 // Involved registers. Use same order as in .INI file "Register_map"
 // These are IDs or indexes. The real data is stored in a hidden WORD8
 // type array. (see "blackbox.h" for details). The WORD8 data is referred
-// with the REG(xxx) macro.
+// with the REG(xxx) macro. Note that for 16-bit timers, the low byte
+// for a given register (e.g. TCNTn) must be immediately followed by the
+// high byte (e.g. TCNTnH) in the DECLARE_REGISTERS block. The WORDHL()
+// macro depends on this when accessing both registers as a single 16
+// little-endian value.
 //
 #ifdef TIMER_N
 DECLARE_REGISTERS
@@ -147,14 +158,16 @@ DECLARE_VAR
    int _Async;             // Type of asynchronous mode operation (TIMER2 only)
    uint _Async_prescaler;  // Explicit prescaler count for asynchronous mode
    uint _Async_interrupt;  // Bitflags of any interrupts from last async tick
+   BOOL _OCA_toggle_ok;    // True if toggle on OCA pin allowed by waveform
 #ifdef TIMER_2
    WORD8 _Tcnt_async;      // TCNT2 seens by MCU when TIMER2 in async mode
    uint _Async_ticks;      // Number of times Async_tick() has been called
    Async_update_t _Async_update[5]; // Pending register updates in async TIMER2
 #endif
 #ifdef TIMER_N
+   int _TMP_regid;         // Register ID by which TMP was last accessed
    WORD8 _TMP_buffer;      // For high byte access in 16-bit timers
-   WORD8 _READ_buffer;     // For high-byte access in On_register_read()
+   WORD8 _READ_buffer;     // For high-byte access in On_register_read()   
 #endif
 END_VAR
 #define Clock_source VAR(_Clock_source)     // To simplify readability...
@@ -168,6 +181,7 @@ END_VAR
 #define Top VAR(_Top)
 #define Overflow VAR(_Overflow)
 #define Update_OCR VAR(_Update_OCR)
+#define TMP_regid VAR(_TMP_regid)
 #define TMP_buffer VAR(_TMP_buffer)
 #define READ_buffer VAR(_READ_buffer)
 #define OCRA_buffer VAR(_OCRA_buffer)
@@ -188,6 +202,7 @@ END_VAR
 #define Tcnt_async VAR(_Tcnt_async)
 #define Async_ticks VAR(_Async_ticks)
 #define Async_update VAR(_Async_update)
+#define OCA_toggle_ok VAR(_OCA_toggle_ok)
 
 // Constant WORD8 value with all bits unknown. Returned by On_register_read()
 // if the timer registers are accessed while the timer is disabled due to
@@ -266,6 +281,7 @@ void Update_display();
 void Action_on_port(PORT, int, BOOL pMode = Counting_up);
 void Log(const char *pFormat, ...);
 void Warning(const char *pText, int pCategory, int pFlags);
+void Log_register_write(int pId, WORD8 pData, unsigned char pMask);
 int Value(int);
 uint Get_io_cycles(void);
 bool Is_disabled(BOOL pPRRWanted = TRUE);
@@ -280,7 +296,7 @@ void On_ICP_edge(EDGE pEdge);
 const char *On_create()                   // Mandatory function
 {
    Debug = 0;
-   return NULL;
+   return NULL;  
 }
 
 void On_destroy()                         //     "        "
@@ -346,11 +362,21 @@ WORD8 *On_register_read(REGISTER_ID pId)
    switch(pId) {
       case TCNTnH:
       case ICRnH:
+         // Verify that the TMP_buffer was previously written by performing
+         // a read of the correct low byte register. Note that for register
+         // reads, negative IDs are used with TMP_regid, while positive IDs
+         // are used when writing registers.
+         if(TMP_regid != -pId) {
+            Warning("Possibly incorrect read sequence from 16-bit register",
+               CAT_TIMER, WARN_TIMERS_16BIT_READ);
+         }            
          return &TMP_buffer;
       case TCNTn:
+         TMP_regid = -TCNTnH;
          TMP_buffer = REG(TCNTnH);
          break;
       case ICRn:
+         TMP_regid = -ICRnH;
          TMP_buffer = REG(ICRnH);
          break;
    }
@@ -452,12 +478,7 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
 // Register selection macros include the "case", X bits check and logging.
 #define case_register(r, m) \
    case r: {\
-      if((pData.x() & m) != m) { \
-         Warning("Unknown bits (X) written into "#r" register", CAT_MEMORY, WARN_MEMORY_WRITE_X_IO); \
-         Log("Write register "#r": $??"); \
-      } else { \
-         Log("Write register "#r": $%02X", pData.d() & m); \
-      }
+      Log_register_write(r, pData, m);
 
 #define end_register } break;
 
@@ -469,7 +490,20 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
       case OCRnA:
       case OCRnB:
       case ICRn:
-         pData = (TMP_buffer << 8) | pData;
+         WORD32 i = ((TMP_buffer << 8) | pData);
+         Log("(TMP_buffer << 8) | pData =%08X", i.x());        
+         
+         //pData = (TMP_buffer << 8) | pData;
+         pData = i;
+
+         Log("pData.x=%04X", pData.x());        
+         
+         // Verify that the TMP_buffer was previously written to using the
+         // high byte register ID that corresponds to this low byte register.
+         if(TMP_regid != pId + 1) {
+            Warning("Possibly incorrect write sequence to 16-bit register",
+               CAT_TIMER, WARN_TIMERS_16BIT_WRITE);
+         }
    }      
 #endif
 
@@ -515,25 +549,15 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
 #ifdef TIMER_N
        //--------------------------------------------------
        // Writing high byte of 16-bit register always updates TMP register
-       // Multiple case_register() statements are needed so each write
-       // operation can be printed to screen if logging enabled.
-       case_register(TCNTnH, 0xFF)
+       case TCNTnH:
+       case OCRnAH:
+       case OCRnBH:
+       case ICRnH:
+          Log_register_write(pId, pData, 0xFF);
+          TMP_regid = pId;
           TMP_buffer = pData;
-          Update_display();
-       end_register
-       case_register(OCRnAH, 0xFF)
-          TMP_buffer = pData;
-          Update_display();
-       end_register
-       case_register(OCRnBH, 0xFF)
-          TMP_buffer = pData;
-          Update_display();
-       end_register
-       case_register(ICRnH, 0xFF)
-          // TODO: Is TMP access through ICRnH allowed even if ICR is read-only?
-          TMP_buffer = pData;
-          Update_display();
-       end_register
+          Update_display();       
+          break;
 
        case_register(ICRn, 0xFF)  // Input Capture Register
        //------------------------------------------------------
@@ -561,6 +585,7 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
           OCRA_buffer = pData;    // All bits r/w no mask necessary
           if(!Update_OCR) {
              REGHL(OCRnA) = pData;
+             Log("REGHL(OCRnA).x=%04X", REGHL(OCRnA).x());
           }
           Update_display(); // Buffer static control need update
        end_register
@@ -731,7 +756,9 @@ void On_reset(int pCause)
    Tick_signature = 0;
    Timer_period = 0;
    Waveform = WAVE_NORMAL;
+   OCA_toggle_ok = true; // OCA toggle allowed by WAVE_NORMAL
 #ifdef TIMER_N
+   TMP_regid = 0;
    TMP_buffer = 0;
    Top = VAL_FFFF;
    Overflow = VAL_FFFF;
@@ -1041,14 +1068,14 @@ void Go()
       return;
    }
    
-   // If the I/O clock was re-enabled, compute how long it was disabled for
+   // If the prescaler clock was re-enabled, compute how long it was disabled for
    if(Last_disabled) {
       Total_disabled = (uint) GET_MICRO_INFO(INFO_CPU_CYCLES) - Last_disabled;
       Last_disabled = 0;
    }
 
    if(Is_disabled()) {
-      return; // Don't schedule ticks
+      return; // Don't schedule ticks if timer itself is still disabled by PRR
    }
    
    if(Clock_source == CLK_INTERNAL) {
@@ -1211,11 +1238,12 @@ void Update_waveform()
    int newWaveform = WAVE_UNKNOWN;
    Top = VAL_NONE;
    Update_OCR = VAL_NONE;
+   OCA_toggle_ok = false;
    
    switch(fullWaveCode) {       // Apply AVR manual Table 15-4
 
       case 0: // Normal timer mode (TOP=0xFFFF / 16-bit) 
-         newWaveform = WAVE_NORMAL; Counting_up = true;
+         newWaveform = WAVE_NORMAL; Counting_up = true; OCA_toggle_ok = true;
          Top = VAL_FFFF; Update_OCR = VAL_NONE; Overflow = VAL_FFFF;
          break;
 
@@ -1235,7 +1263,7 @@ void Update_waveform()
          break;
 
       case 4: // CTC (TOP=OCRA)
-         newWaveform = WAVE_CTC; Counting_up = true;
+         newWaveform = WAVE_CTC; Counting_up = true; OCA_toggle_ok = true;
          Top = VAL_OCRA; Update_OCR = VAL_NONE; Overflow = VAL_FFFF;
          break;
 
@@ -1260,7 +1288,7 @@ void Update_waveform()
          break;
 
       case 9: // PWM phase and frequency correct (TOP=OCRA)
-         newWaveform = WAVE_PWM_PFC;
+         newWaveform = WAVE_PWM_PFC; OCA_toggle_ok = true;
          Top = VAL_OCRA; Update_OCR = VAL_00; Overflow = VAL_00;
          break;
 
@@ -1270,12 +1298,12 @@ void Update_waveform()
          break;
 
       case 11: // PWM phase correct (TOP=OCRA)
-         newWaveform = WAVE_PWM_PC;
+         newWaveform = WAVE_PWM_PC; OCA_toggle_ok = true;
          Top = VAL_OCRA; Update_OCR = VAL_OCRA; Overflow = VAL_00;
          break;
 
       case 12: // CTC (TOP=ICR)
-         newWaveform = WAVE_CTC; Counting_up = true;
+         newWaveform = WAVE_CTC; Counting_up = true; OCA_toggle_ok = true;
          Top = VAL_ICR; Update_OCR = VAL_NONE; Overflow = VAL_FFFF;
          break;
 
@@ -1285,12 +1313,12 @@ void Update_waveform()
          break;
          
       case 14: // Fast PWM (TOP=ICR)
-         newWaveform = WAVE_PWM_FAST; Counting_up = true;
+         newWaveform = WAVE_PWM_FAST; Counting_up = true; OCA_toggle_ok = true;
          Top = VAL_ICR; Update_OCR = VAL_00; Overflow = VAL_ICR;
          break;
 
       case 15: // Fast PWM (TOP=OCRA)
-         newWaveform = WAVE_PWM_FAST; Counting_up = true;
+         newWaveform = WAVE_PWM_FAST; Counting_up = true; OCA_toggle_ok = true;
          Top = VAL_OCRA; Update_OCR = VAL_00; Overflow = VAL_OCRA;
          break;
    }
@@ -1321,11 +1349,12 @@ void Update_waveform()
    int newWaveform = WAVE_UNKNOWN;
    Top = VAL_NONE;
    Update_OCR = VAL_NONE;
+   OCA_toggle_ok = false;
    
    switch(fullWaveCode) {       // Apply AVR manual (table #51)
 
       case 0: // Normal timer mode (TOP=0xFF)
-         newWaveform = WAVE_NORMAL; Counting_up = true;
+         newWaveform = WAVE_NORMAL; Counting_up = true; OCA_toggle_ok = true;
          Top = VAL_FF; Update_OCR = VAL_NONE; Overflow = VAL_FF;
          break;
 
@@ -1335,7 +1364,7 @@ void Update_waveform()
          break;
 
       case 2: // CTC (TOP=OCRA)
-         newWaveform = WAVE_CTC; Counting_up = true;
+         newWaveform = WAVE_CTC; Counting_up = true; OCA_toggle_ok = true;
          Top = VAL_OCRA; Update_OCR = VAL_NONE; Overflow = VAL_FF;
          break;
 
@@ -1345,17 +1374,17 @@ void Update_waveform()
          break;
 
       case 5: // PWM phase correct (TOP=OCRA)
-         newWaveform = WAVE_PWM_PC;
+         newWaveform = WAVE_PWM_PC; OCA_toggle_ok = true;
          Top = VAL_OCRA; Update_OCR = VAL_OCRA; Overflow = VAL_00;
          break;
 
       case 7: // Fast PWM (TOP=OCRA)
-         newWaveform = WAVE_PWM_FAST; Counting_up = true;
+         newWaveform = WAVE_PWM_FAST; Counting_up = true; OCA_toggle_ok = true;
          Top = VAL_OCRA; Update_OCR = VAL_00; Overflow = VAL_OCRA;
          break;
 
       case 4: case 6:   // Reserved
-         newWaveform = WAVE_RESERVED;
+         newWaveform = WAVE_RESERVED; OCA_toggle_ok = true;
          Top = VAL_NONE; Update_OCR = VAL_NONE; Overflow = VAL_NONE;
          break;
    }
@@ -1384,11 +1413,10 @@ void Update_compare_actions()
    int compCode = REG(TCCRnA).get_field(7, 6); // Bits 7, 6  COM0A1, COM0A0
    switch(compCode) {
       case 1:                               // Toggle
-         Action_comp_A = ACT_TOGGLE;
-         if(Waveform == WAVE_PWM_FAST || IS_WAVE_DUAL_SLOPE()) {
-            if(REG(TCCRnB)[3] == 0) {       // disables toggle (TCCRnB, bit 3)
-               Action_comp_A = ACT_NONE;
-            }
+         if(OCA_toggle_ok) {
+            Action_comp_A = ACT_TOGGLE;
+         } else {
+            Action_comp_A = ACT_NONE;
          }
          break;
          
@@ -1411,9 +1439,9 @@ void Update_compare_actions()
          Action_comp_B = ACT_TOGGLE;
          if(Waveform == WAVE_PWM_FAST || IS_WAVE_DUAL_SLOPE()) {
 #ifdef TIMER_N
-         Action_comp_B = ACT_NONE;          // Tables 15-2, 15-3 manual         
+            Action_comp_B = ACT_NONE;          // Tables 15-2, 15-3 manual         
 #else
-         Action_comp_B = ACT_RESERVED;      // Tables #49/50 manual
+            Action_comp_B = ACT_RESERVED;      // Tables #49/50 manual
 #endif
          }
          break;
@@ -1645,4 +1673,31 @@ void Warning(const char *pText, int pCategory, int pFlags)
 {
    WARNING(pText, pCategory, pFlags);
    Log("WARNING: %s", pText);
+}
+
+void Log_register_write(int pId, WORD8 pData, unsigned char pMask)
+//*************************
+// Called from every 'case XXX:' statement when handling On_register_write().
+// Parameter pMask is a bitmask of useful (i.e. not reserved) bits in the
+// register. If the pData value being written to the register contains any
+// unknown bits in the pMask position then issue a warning. In either case
+// Log() a message indicating the register is being written with pData. The
+// pId is used to look up the true register name (as given in the .ini file)
+// for the warning and log messages.
+{
+   if((pData.x() & pMask) != pMask) {      
+      char strBuffer[64];
+      char *strName = reg(pId);      
+      
+      snprintf(strBuffer, 64, "Unknown bits (X) written into %s register",
+         strName);
+         
+      Warning(strBuffer, CAT_MEMORY, WARN_MEMORY_WRITE_X_IO);
+      Log("Write register %s: $??", strName);      
+   } else {
+      if(Debug & DEBUG_LOG) { // Don't waste time in reg() if not logging
+         char *strName = reg(pId);
+         Log("Write register %s: $%02X", strName, pData.d() & pMask);
+      }
+   }
 }
