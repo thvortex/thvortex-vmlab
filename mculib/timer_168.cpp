@@ -490,14 +490,8 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
       case OCRnA:
       case OCRnB:
       case ICRn:
-         WORD32 i = ((TMP_buffer << 8) | pData);
-         Log("(TMP_buffer << 8) | pData =%08X", i.x());        
-         
-         //pData = (TMP_buffer << 8) | pData;
-         pData = i;
+         pData = (TMP_buffer << 8) | pData;
 
-         Log("pData.x=%04X", pData.x());        
-         
          // Verify that the TMP_buffer was previously written to using the
          // high byte register ID that corresponds to this low byte register.
          if(TMP_regid != pId + 1) {
@@ -585,7 +579,6 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
           OCRA_buffer = pData;    // All bits r/w no mask necessary
           if(!Update_OCR) {
              REGHL(OCRnA) = pData;
-             Log("REGHL(OCRnA).x=%04X", REGHL(OCRnA).x());
           }
           Update_display(); // Buffer static control need update
        end_register
