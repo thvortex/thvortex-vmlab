@@ -53,8 +53,8 @@ char *hex(const WORD8 &pData)
 
 char *hex(const WORD16 &pData)
 //*******************
-// Return a hex string representation of a WORD16 value. If the WORD16 contains any unknown
-// bits then return "$????". Because this function uses a static buffer, the returned string
+// Return a hex string representation of a word16 value. if the word16 contains any unknown
+// bits then return "$????". because this function uses a static buffer, the returned string
 // is only valid until the next call to this function.
 {
    static char strBuffer[8];
@@ -63,6 +63,35 @@ char *hex(const WORD16 &pData)
       snprintf(strBuffer, 8, "$%04X", pData.d());
    else
       snprintf(strBuffer, 8, "$????");
+   
+   return strBuffer;
+}
+
+char *reg(int pId)
+//*************************
+// Given a register ID, return the "true" register name that was specified in
+// the .ini file. Because this function uses a static buffer, the returned
+// string is only valid until the next call to this function.
+{
+   static char strBuffer[16]; // Register name returned by this function
+
+   int gadget;    // The register's gadget ID
+   WORD8 *w;      // Dummy argument needed for GetRegisterInfo() call 
+   const char *s; // Dummy argument needed for GetRegisterInfo() call
+   
+   // Call the hidden GetRegisterInfo() function that was created by the
+   // REGISTERS_VIEW block to retrieve the register's gadget ID.
+   gadget = GetRegisterInfo(pId, &w, &s, &s, &s, &s, &s, &s, &s, &s);   
+   if(gadget == -1) {
+      return "?";
+   }
+   
+   // True name was assigned to the static label associated with register.
+   // Since GET_HANDLE() only allows GADGET0 through GADGET31, we have to
+   // use a more indirect way to get static label handle.
+   HWND parentHandle = GetParent(GET_HANDLE(gadget));
+   HWND labelHandle = GetDlgItem(parentHandle, gadget + 100);
+   GetWindowText(labelHandle, strBuffer, 16);
    
    return strBuffer;
 }

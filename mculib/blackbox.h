@@ -145,7 +145,7 @@ typedef unsigned long ADDRESS;
 #if !defined(_WORD8) // Added to allow external include
 namespace PRIVATE {
    // Forward declarations needed by typecasts and class definitions
-   template <typename T> class WORDX;
+   template <typename T, unsigned int M> class WORDX;
    template <typename T> class WORDN;
    template <typename Tl, typename Tw> class WORDHL;
    template<typename T> class WORDLE;
@@ -153,19 +153,19 @@ namespace PRIVATE {
 }
 
 // Publicly visible primitive WORD classes for user components
-typedef PRIVATE::WORDX< PRIVATE::WORDN<unsigned char> > WORD8;
-typedef PRIVATE::WORDX< PRIVATE::WORDN<unsigned short> > WORD16;
-typedef PRIVATE::WORDX< PRIVATE::WORDN<unsigned int> > WORD32;
+typedef PRIVATE::WORDX<PRIVATE::WORDN<UCHAR>, 0xFF> WORD8;
+typedef PRIVATE::WORDX<PRIVATE::WORDN<USHORT>, 0xFFFF> WORD16;
+typedef PRIVATE::WORDX<PRIVATE::WORDN<UINT>, 0xFFFFFFFF> WORD32;
 
 // Publicly visible little-endian WORD classes for user components
-typedef PRIVATE::WORDX< PRIVATE::WORDHL<unsigned short, PRIVATE::WORDLE<WORD8> > > WORD16LE;
-typedef PRIVATE::WORDX< PRIVATE::WORDHL<unsigned int, PRIVATE::WORDLE<WORD16LE> > > WORD32LE;
-typedef PRIVATE::WORDX< PRIVATE::WORDHL<unsigned int, PRIVATE::WORDLE<WORD16> > > WORD32LE16;
+typedef PRIVATE::WORDX<PRIVATE::WORDHL<USHORT, PRIVATE::WORDLE<WORD8> >, 0xFFFF> WORD16LE;
+typedef PRIVATE::WORDX<PRIVATE::WORDHL<UINT, PRIVATE::WORDLE<WORD16LE> >, 0xFFFFFFFF> WORD32LE;
+typedef PRIVATE::WORDX<PRIVATE::WORDHL<UINT, PRIVATE::WORDLE<WORD16> >, 0xFFFFFFFF> WORD32LE16;
 
 // Publicly visible big-endian WORD classes for user components
-typedef PRIVATE::WORDX< PRIVATE::WORDHL<unsigned short, PRIVATE::WORDBE<WORD8> > > WORD16BE;
-typedef PRIVATE::WORDX< PRIVATE::WORDHL<unsigned int, PRIVATE::WORDBE<WORD16BE> > > WORD32BE;
-typedef PRIVATE::WORDX< PRIVATE::WORDHL<unsigned int, PRIVATE::WORDBE<WORD16> > > WORD32BE16;
+typedef PRIVATE::WORDX<PRIVATE::WORDHL<USHORT, PRIVATE::WORDBE<WORD8> >, 0xFFFF> WORD16BE;
+typedef PRIVATE::WORDX<PRIVATE::WORDHL<UINT, PRIVATE::WORDBE<WORD16BE> >, 0xFFFFFFFF> WORD32BE;
+typedef PRIVATE::WORDX<PRIVATE::WORDHL<UINT, PRIVATE::WORDBE<WORD16> >, 0xFFFFFFFF> WORD32BE16;
 
 #endif // WORD8
 
@@ -616,7 +616,7 @@ void Destroy()
 
 namespace PRIVATE {
 
-template <typename T>
+template <typename T, unsigned int M>
 class WORDX : public T
 //*********
 // Generic class to model any numeric type that can have undefined bit status
@@ -628,9 +628,16 @@ class WORDX : public T
 // bitwise operations are carried out as WORD32 instances to avoid bit
 // truncation. When smaller values are converted to larger ones (such as the
 // intermediate WORD32), the upper bits are set to a known state and a value
-// of 0.
-{   
+// of 0. Template parameter "M" is a bitmask corresponding to the primitive
+// size of the WORDX instance. For exmaple WORD8::MASK == 0xFF.
+{
 public:
+   // When converting from this WORDX instance to a larger bit-width, this
+   // mask is used to set the upper bits of the larger bit-width WORDX to
+   // a known state (and 0 data value). For example, if a WORD8 is converted
+   // to a WORD32, then the high order bits 8-31 in the WORD32 are set to
+   // a known zero state.
+   static const unsigned int MASK;
 
    inline WORDX() : T(0, 0) {}
    //**************************************
@@ -644,14 +651,12 @@ public:
    //**************************************
    // Constructor, upon two values
 
-   template<typename U>
-   inline operator WORDX<U> () const
+   template<typename U, unsigned int N>
+   inline operator WORDX<U, N> () const
    //******************************
    // Generic type cast operator to other WORDX bit widths/layouts
    {
-      // "i64" prevents compile warnings about shift offsets for WORD32
-      WORDX<U>::TYPE mask = -1i64 << (sizeof(TYPE) * 8);
-      return WORDX<U>(x() | mask, d());
+      return WORDX<U, N>(~MASK | x(), d());
    }
 
    LOGIC get_bit(UINT pBit) const
@@ -726,33 +731,38 @@ public:
    const WORD32 operator & (const WORD32 &p) const
    //*************************************
    {
-      return WORD32( (x() & p.x()) | (~d() & x()) | (~p.d() & p.x()), d() & p.d() );
+      UINT x32 = ~MASK | x(); // Convert this object's x value to 32 bits
+      return WORD32( (x32 & p.x()) | (~d() & x32) | (~p.d() & p.x()), d() & p.d() );
    }
 
    const WORD32 operator | (const WORD32 &p) const
    //*************************************
    {
-      return WORD32( (x() & p.x()) | (d() & x()) | (p.d() & p.x()), d() | p.d() );
+      UINT x32 = ~MASK | x(); // Convert this object's x value to 32 bits
+      return WORD32( (x32 & p.x()) | (d() & x32) | (p.d() & p.x()), d() | p.d() );
    }
    
    const WORD32 operator ^ (const WORD32 &p) const
    //**************************************
    {
-      return WORD32( x() & p.x(), d() ^ p.d() );
+      UINT x32 = ~MASK | x(); // Convert this object's x value to 32 bits
+      return WORD32( x32 & p.x(), d() ^ p.d() );
    }
 
    const WORD32 operator << (int pInteger) const
    //**************************************
    {
+      UINT x32 = ~MASK | x(); // Convert this object's x value to 32 bits
       UINT mask = (1 << pInteger) - 1;
-      return WORD32( (x() << pInteger) | mask, d() << pInteger );
+      return WORD32( (x32 << pInteger) | mask, d() << pInteger );
    }
 
    const WORD32 operator >> (int pInteger) const
    //**************************************
    {
+      UINT x32 = ~MASK | x(); // Convert this object's x value to 32 bits
       UINT mask = -1 >> pInteger;
-      return WORD32( ~mask | (x() >> pInteger), d() >> pInteger );
+      return WORD32( ~mask | (x32 >> pInteger), d() >> pInteger );
    }
    
    bool operator == (const WORD32 &p) const
@@ -781,6 +791,9 @@ public:
       return x() == ((TYPE) -1);
    }
 };
+
+// Static variable WORDX::MASK is initialized with WORDX template parameter "M"
+template<typename T, unsigned int M> const unsigned int WORDX<T, M>::MASK = M;
 
 template <typename T>
 class WORDN
