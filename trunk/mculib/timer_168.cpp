@@ -58,10 +58,10 @@ enum {
    VAL_NONE, VAL_OCRA, VAL_ICR, VAL_00, VAL_FF, VAL_1FF, VAL_3FF, VAL_FFFF
 };
 
-// Mask values for OCR registers based on the VAL_XXX used as counter TOP.
+// Mask values for OCR/TCNT registers based on the VAL_XXX used as counter TOP.
 // When using a fixed counter TOP value with 16-bit timers, writes to the
-// OCR registers are masked against unused bits
-const int OCR_MASK[] = {
+// OCR buffers and TCNT updates are masked against unused bits
+const int MASK[] = {
    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFF, 0x1FF, 0x3FF, 0xFFFF
 };
 
@@ -280,7 +280,6 @@ void Update_clock_source();
 void Update_display();
 void Action_on_port(PORT, int, BOOL pMode = Counting_up);
 void Log(const char *pFormat, ...);
-void Warning(const char *pText, int pCategory, int pFlags);
 void Log_register_write(int pId, WORD8 pData, unsigned char pMask);
 int Value(int);
 uint Get_io_cycles(void);
@@ -338,7 +337,7 @@ WORD8 *On_register_read(REGISTER_ID pId)
 {
    // Registers cannot be read if the timer is disabled due to PRR
    if(PRR && !Async) {
-      Warning("Register read while disabled by PRR", CAT_TIMER, WARN_MISC);
+      WARNING("Register read while disabled by PRR", CAT_TIMER, WARN_MISC);
       return &UNKNOWN8;
    }
    
@@ -348,7 +347,7 @@ WORD8 *On_register_read(REGISTER_ID pId)
 #ifdef TIMER_2
    if(Async && pId == TCNTn) {
       if(Tcnt_async != REG(TCNTn)) {
-         Warning("Reading stale TCNT2 after exiting SLEEP",
+         WARNING("Reading stale TCNT2 after exiting SLEEP",
             CAT_TIMER, WARN_READ_BUSY);
       }
       return &Tcnt_async;
@@ -367,17 +366,19 @@ WORD8 *On_register_read(REGISTER_ID pId)
          // reads, negative IDs are used with TMP_regid, while positive IDs
          // are used when writing registers.
          if(TMP_regid != -pId) {
-            Warning("Possibly incorrect read sequence from 16-bit register",
+            WARNING("Possibly incorrect read sequence from 16-bit register",
                CAT_TIMER, WARN_TIMERS_16BIT_READ);
          }            
          return &TMP_buffer;
       case TCNTn:
          TMP_regid = -TCNTnH;
          TMP_buffer = REG(TCNTnH);
+         Update_display();
          break;
       case ICRn:
          TMP_regid = -ICRnH;
          TMP_buffer = REG(ICRnH);
+         Update_display();
          break;
    }
    
@@ -428,7 +429,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
 {
    // Registers cannot be written if the timer is disabled due to PRR
    if(PRR && !Async) {
-      Warning("Register written while disabled by PRR", CAT_TIMER, WARN_MISC);
+      WARNING("Register written while disabled by PRR", CAT_TIMER, WARN_MISC);
       return;
    }
 
@@ -440,7 +441,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
                Assr_text[i], hex(pData));
          
             if(REG(ASSR)[i] == 1) {
-               Warning("Asynchronous register update already pending",
+               WARNING("Asynchronous register update already pending",
                   CAT_TIMER, WARN_WRITE_BUSY);
             }
             
@@ -451,7 +452,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
             // interrupts generated when TOP==OCRA or in PWM phase-correct
             // mode when overflow interrupts occur on BOTTOM.
             if(REG(TCNTn) == 0xff && pId != TCNTn) {
-               Warning("Errata: Asynchronous interrupts may be lost",
+               WARNING("Errata: Asynchronous interrupts may be lost",
                   CAT_TIMER, WARN_WRITE_BUSY);
             }
             
@@ -495,7 +496,7 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
          // Verify that the TMP_buffer was previously written to using the
          // high byte register ID that corresponds to this low byte register.
          if(TMP_regid != pId + 1) {
-            Warning("Possibly incorrect write sequence to 16-bit register",
+            WARNING("Possibly incorrect write sequence to 16-bit register",
                CAT_TIMER, WARN_TIMERS_16BIT_WRITE);
          }
    }      
@@ -558,7 +559,7 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
           if(Top == VAL_ICR) {
              REGHL(ICRn) = pData;
           } else {
-             Warning("ICRn is read-only if not used as TOP",
+             WARNING("ICRn is read-only if not used as TOP",
                 CAT_TIMER, WARN_PARAM_BUSY);
           }
        end_register
@@ -566,28 +567,28 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
        
        case_register(TCNTn, 0xFF) // Timer Counter Register
        //--------------------------------------------------
-          REGHL(TCNTn) = pData;
+          REGHL(TCNTn) = pData & MASK[Top];
           Compare_blocked = true;
           // TODO: If TSM is on and clock perios is not 1 then the clock is not
           // really running and this warning should not be printed
           if(Clock_source != CLK_STOP && Clock_source != CLK_UNKNOWN)
-             Warning("TCNTn modified while running", CAT_TIMER, WARN_PARAM_BUSY);
+             WARNING("TCNTn modified while running", CAT_TIMER, WARN_PARAM_BUSY);
        end_register
 
        case_register(OCRnA, 0xFF)  // Output Compare Register A
        //------------------------------------------------------
-          OCRA_buffer = pData;    // All bits r/w no mask necessary
+          OCRA_buffer = pData & MASK[Top];
           if(!Update_OCR) {
-             REGHL(OCRnA) = pData;
+             REGHL(OCRnA) = pData & MASK[Top];;
           }
           Update_display(); // Buffer static control need update
        end_register
 
        case_register(OCRnB, 0xFF) // Output Compare Register B
        //------------------------------------------------------
-          OCRB_buffer = pData;
+          OCRB_buffer = pData & MASK[Top];
           if(!Update_OCR) {
-             REGHL(OCRnB) = pData;
+             REGHL(OCRnB) = pData & MASK[Top];;
           }
           Update_display();
        end_register
@@ -597,7 +598,7 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
        //------------------------------------------------------
           // EXCLK should be changed before asynchronous mode enabled
           if(pData[6] != REG(ASSR)[6] && (pData[5] == 1 || REG(ASSR)[5] == 1)) {
-             Warning("EXCLK bit in ASSR changed while AS2 bit is 1", CAT_TIMER,
+             WARNING("EXCLK bit in ASSR changed while AS2 bit is 1", CAT_TIMER,
                 WARN_PARAM_BUSY);
           }
           
@@ -853,7 +854,7 @@ void On_sleep(int pMode)
    // to run in async mode.
    if(Sleep_mode == SLEEP_EXIT && pMode != SLEEP_IDLE) {
       if(REG(ASSR).get_field(4, 0) > 0) {
-         Warning("Entering SLEEP with pending updates to asynchronous registers",
+         WARNING("Entering SLEEP with pending updates to asynchronous registers",
             CAT_TIMER, WARN_PARAM_BUSY);
       }
    }
@@ -980,7 +981,7 @@ void Async_change()
    // If leaving async mode (AS2=0) then cancel any pending asynchronous
    // register updates and clear 2UB bits.
    if(Async == ASY_NONE && REG(ASSR).get_field(4, 0) > 0) {
-      Warning("Pending updates to asynchronous registers lost",
+      WARNING("Pending updates to asynchronous registers lost",
          CAT_TIMER, WARN_PARAM_BUSY);
       REG(ASSR) = REG(ASSR) & 0x60;
    }
@@ -1029,7 +1030,7 @@ void Async_sleep_check(int pMode)
       return;
    }   
    if(Async_interrupt) {
-      Warning("Possible duplicate asynchronous interrupts when re-entering SLEEP",
+      WARNING("Possible duplicate asynchronous interrupts when re-entering SLEEP",
          CAT_TIMER, WARN_MISC);
    }
    if(Async_interrupt & (1 << OVF)) {
@@ -1097,10 +1098,10 @@ void Action_on_port(PORT pPort, int pCode, BOOL pMode)
    
    if(rc == PORT_NOT_OUTPUT) {
       if(pPort == OCA) {
-         Warning("OCnA enabled but pin not defined as output in DDR", CAT_TIMER,
+         WARNING("OCnA enabled but pin not defined as output in DDR", CAT_TIMER,
             WARN_TIMERS_OUTPUT);
       } else if(pPort == OCB) {
-         Warning("OCnB enabled but pin not defined as output in DDR", CAT_TIMER,
+         WARNING("OCnB enabled but pin not defined as output in DDR", CAT_TIMER,
             WARN_TIMERS_OUTPUT);
       }
    }   
@@ -1130,14 +1131,11 @@ void Count()
 
    // Reverse counter direction in PWM PC/PFC mode when it reaches TOP/BOTTOM/MAX
    if(IS_WAVE_DUAL_SLOPE()) {
-      if(Counting_up) {
-         if(REGHL(TCNTn) == Value(Top)) {
-            Counting_up = false;
-         }
-      } else {
-         if(REGHL(TCNTn) == 0) {
-            Counting_up = true;
-         }
+      if(REGHL(TCNTn) == Value(Top)) {
+         Counting_up = false;
+      }
+      else if(REGHL(TCNTn) == 0) {
+         Counting_up = true;
       }
    }
 
@@ -1196,22 +1194,23 @@ void Count()
    // If OCR double buffering in effect, then update real OCR registers when needed
    if(Update_OCR) {                         
       if(REGHL(TCNTn) == Value(Update_OCR)) {
-         if(REGHL(OCRnA) != OCRA_buffer) {
+         if(REGHL(OCRnA) != (OCRA_buffer & MASK[Top])) {
             Log("Updating double buffered register OCRnA: %s", hex(OCRA_buffer));
          }
-         if(REGHL(OCRnB) != OCRB_buffer) {
+         if(REGHL(OCRnB) != (OCRB_buffer & MASK[Top])) {
             Log("Updating double buffered register OCRnB: %s", hex(OCRB_buffer));
          }
-         REGHL(OCRnA) = OCRA_buffer;
-         REGHL(OCRnB) = OCRB_buffer;
+         REGHL(OCRnA) = OCRA_buffer & MASK[Top];
+         REGHL(OCRnB) = OCRB_buffer & MASK[Top];
       }
    }
 
-   // Increment/decrement counter and clear after TOP was reached
+   // Increment/decrement counter and clear after TOP was reached if not
+   // decrementing. Also if in decrement mode, do not decrement past zero
    if(Counting_up && REGHL(TCNTn) == Value(Top)) {
       REGHL(TCNTn) = 0;
-   } else {
-      REGHL(TCNTn).d(REGHL(TCNTn).d() + (Counting_up ? 1 : -1));
+   } else if(Counting_up || REGHL(TCNTn) != 0) {
+      REGHL(TCNTn).d( (REGHL(TCNTn).d() + (Counting_up ? 1 : -1)) & MASK[Top] );
    }
 }
 
@@ -1320,9 +1319,9 @@ void Update_waveform()
       Waveform = newWaveform;
       Log("Updating waveform: %s (TOP=%s)", Wave_text[Waveform], Top_text[Top]);
       if(Clock_source != CLK_STOP) // TODO: Don't issue warning if in TSM mode
-      	Warning("Changing waveform while the timer is running", CAT_TIMER, WARN_PARAM_BUSY);
+      	WARNING("Changing waveform while the timer is running", CAT_TIMER, WARN_PARAM_BUSY);
       if(Waveform == WAVE_RESERVED)
-         Warning("Reserved waveform mode", CAT_TIMER, WARN_PARAM_RESERVED);
+         WARNING("Reserved waveform mode", CAT_TIMER, WARN_PARAM_RESERVED);
    }
 }
 
@@ -1386,9 +1385,9 @@ void Update_waveform()
       Waveform = newWaveform;
       Log("Updating waveform: %s (TOP=%s)", Wave_text[Waveform], Top_text[Top]);
       if(Clock_source != CLK_STOP) // TODO: Don't issue warning if in TSM mode
-      	Warning("Changing waveform while the timer is running", CAT_TIMER, WARN_PARAM_BUSY);
+      	WARNING("Changing waveform while the timer is running", CAT_TIMER, WARN_PARAM_BUSY);
       if(Waveform == WAVE_RESERVED)
-         Warning("Reserved waveform mode", CAT_TIMER, WARN_PARAM_RESERVED);
+         WARNING("Reserved waveform mode", CAT_TIMER, WARN_PARAM_RESERVED);
    }
 }
 #endif // #ifdef TIMER_N
@@ -1450,19 +1449,19 @@ void Update_compare_actions()
          break;
    }
    if(Action_comp_B == ACT_RESERVED) {
-      Warning("Reserved combination of COM0Bx bits", CAT_TIMER, WARN_PARAM_RESERVED);
+      WARNING("Reserved combination of COM0Bx bits", CAT_TIMER, WARN_PARAM_RESERVED);
    }
 
    // If any action on output compare pins, I need to be the owner
    int rc;
    rc = TAKEOVER_PORT(OCA, Action_comp_A != ACT_NONE);
    if(rc == PORT_NOT_OUTPUT) {
-      Warning("OC0A enabled but pin not defined as output in DDR", CAT_TIMER,
+      WARNING("OC0A enabled but pin not defined as output in DDR", CAT_TIMER,
          WARN_TIMERS_OUTPUT);
    }
    rc = TAKEOVER_PORT(OCB, Action_comp_B != ACT_NONE && Action_comp_B != ACT_RESERVED);
    if(rc == PORT_NOT_OUTPUT) {
-      Warning("OC0B enabled but pin not defined as output in DDR", CAT_TIMER,
+      WARNING("OC0B enabled but pin not defined as output in DDR", CAT_TIMER,
          WARN_TIMERS_OUTPUT);
    }
    
@@ -1526,7 +1525,7 @@ void Update_clock_source()
 
    if(newClockSource != Clock_source) {
       if(Clock_source != CLK_STOP && newClockSource != CLK_STOP)
-         Warning("Changed clock source while running", CAT_TIMER, WARN_PARAM_BUSY);
+         WARNING("Changed clock source while running", CAT_TIMER, WARN_PARAM_BUSY);
       Clock_source = newClockSource;
       Log("Updating clock source: %s", Clock_text[Clock_source]);
    }
@@ -1656,18 +1655,6 @@ void Log(const char *pFormat, ...)
    }
 }
 
-void Warning(const char *pText, int pCategory, int pFlags)
-//*************************
-// Wrapper around the WARNING() function. If logging is enabled, this function
-// will also PRINT() the warning message. To avoid flooding the Messages window,
-// VMLAB will not print multiple consecutive WARNING()s with the same pCategory
-// and pFlages. Using PRINT() ensures that all warning messages are seen since
-// different warning messages may be using the same set of flags.
-{
-   WARNING(pText, pCategory, pFlags);
-   Log("WARNING: %s", pText);
-}
-
 void Log_register_write(int pId, WORD8 pData, unsigned char pMask)
 //*************************
 // Called from every 'case XXX:' statement when handling On_register_write().
@@ -1685,7 +1672,7 @@ void Log_register_write(int pId, WORD8 pData, unsigned char pMask)
       snprintf(strBuffer, 64, "Unknown bits (X) written into %s register",
          strName);
          
-      Warning(strBuffer, CAT_MEMORY, WARN_MEMORY_WRITE_X_IO);
+      WARNING(strBuffer, CAT_MEMORY, WARN_MEMORY_WRITE_X_IO);
       Log("Write register %s: $??", strName);      
    } else {
       if(Debug & DEBUG_LOG) { // Don't waste time in reg() if not logging

@@ -199,7 +199,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
 #define case_register(r, m) \
    case r: { \
       zeroMask = m; \
-      if((pData.x & m) != m) \
+      if((pData.x() & m) != m) \
          WARNING("Unknown bits (X) written into "#r" register", CAT_MEMORY, WARN_MEMORY_WRITE_X_IO);
 
 #define end_register } break;
