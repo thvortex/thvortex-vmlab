@@ -314,7 +314,7 @@ void On_write_byte(UCHAR pData)
 // Called from On_Rx() when a new data byte is received for writing to EEPROM
 // memory. The address pointer is incremented after the write (if the pointer
 // reached the end of the current page, it wraps back around to the start
-// of the same page). This function also issues when the address pointer
+// of the same page). This function also issues errors when the address pointer
 // wraps and when the entire page has been filled up
 {
    Log("Write EEPROM[$%05X]=$%02X", VAR(Pointer), pData);
@@ -439,29 +439,29 @@ const char *On_create()
 // Messages window. Typical tasks: check passed parameters, open files,
 // allocate memory,...
 {
+   // Specify default values for optional parameters
+   VAR(Delay) = 0;              // No write delay; fastest possible simulation
+   VAR(Slave_addr) = 0x50 << 1; // Standard EEPROM address: 1010xxx
+   VAR(Slave_mask) = 0x78 << 1; // EEPROM with A2-A0 pins not used: 1111000
+
    int paramCount = GET_PARAM(0);
    if(paramCount < 2) {
-      return "<MemorySizeL2> and <PageSizeL2> parameters are required";
+      return "<MemorySize> and <PageSize> parameters are required";
    }
       
-   // <MemorySizeL2> is the total EEPROM memory byte size (in log base 2)
+   // <MemorySize> is the total EEPROM memory byte size (in log base 2)
    int memorySize = GET_PARAM(1);
    if(memorySize < 0 || memorySize > 19) {
-      return "<MemorySizeL2> parameter must be an integer 0 to 19";
+      return "<MemorySize> parameter must be an integer 0 to 19";
    }
    VAR(Pointer_mask) = (1 << memorySize) - 1;
    
-   // <PageSizeL2> is the sequential write page size (in log base 2)
+   // <PageSize> is the sequential write page size (in log base 2)
    int pageSize = GET_PARAM(2);
    if(pageSize < 0 || pageSize > memorySize) {
-      return "<PageSizeL2> parameter must be an integer 0 to <MemorySizeL2>";
+      return "<PageSize> parameter must be an integer 0 to <MemorySize>";
    }
    VAR(Page_mask) = (1 << pageSize) - 1;
-
-   // Specify default values for optional parameters
-   VAR(Delay) = 0;         // No write delay; fastest possible simulation
-   VAR(Slave_addr) = 0x50; // Standard EEPROM address: 1010xxx
-   VAR(Slave_mask) = 0x78; // EEPROM with A2-A0 pins not used: 1111000
    
    // <Delay> is the delay (in seconds) for write operations to complete
    if(paramCount >= 3) {
@@ -473,22 +473,22 @@ const char *On_create()
       return "<SlaveAddr> and <SlaveMask> parameters must be used together";
    }
    if(paramCount >= 5) {
-      VAR(Slave_addr) = GET_PARAM(4);
-      if(VAR(Slave_addr) < 0 || VAR(Slave_addr) > 127) {
+      int slaveAddr = GET_PARAM(4);
+      if(slaveAddr < 0 || slaveAddr > 127) {
          return "<SlaveAddr> must be an integer 0 to 127";
       }     
-      VAR(Slave_mask) = GET_PARAM(5);
-      if(VAR(Slave_mask) < 0 || VAR(Slave_mask) > 127) {
+      int slaveMask = GET_PARAM(5);
+      if(slaveMask < 0 || slaveMask > 127) {
          return "<SlaveMask> must be an integer 0 to 127";
       }
+      
+      // Adjust the 7-bit slave address/mask parameters to match the full 8-bit
+      // byte received after the START condition where the LSb in the byte is
+      // a read/write flag;
+      VAR(Slave_addr) = slaveAddr << 1;
+      VAR(Slave_mask) = slaveMask << 1;
    }
    
-   // Adjust the 7-bit slave address/mask parameters to match the full 8-bit
-   // byte received after the START condition where the LSb in the byte is
-   // a read/write flag;
-   VAR(Slave_addr) <<= 1;
-   VAR(Slave_mask) <<= 1;
-
    // Certain larger memory sizes require using some of the bits in the I2C
    // slave address as most significant bits in the EEPROM address pointer.
    // VAR(Slave_ptr_mask) is the bitmask applied against the slave address
@@ -560,7 +560,6 @@ void On_simulation_begin()
 // here Open files; allocate memory, etc.
 {
    // TODO: DELETE THIS ONCE ON_DIGITAL_EDGE WORKS FOR INPUTS
-   //SET_DRIVE(SDA, false);
    VAR(SDA_state) = GET_LOGIC(SDA);
    
    // Initialize internal variables to power-on state and update GUI
@@ -605,7 +604,6 @@ void On_digital_in_edge(PIN pDigitalIn, EDGE pEdge, double pTime)
          // Data is shifted in MSb first. Don't try to receive if the last TX
          // bit has just been shifted out, because this rising edge will be
          // used by the master to sample the last bit.
-         // TODO: Finish this comment
          if(pEdge == RISE && VAR(RX_count) && !VAR(TX_count)) {
             VAR(RX_byte) <<= 1;
             VAR(RX_byte) |= (GET_LOGIC(SDA) == 1);
@@ -668,7 +666,6 @@ void On_remind_me(double pTime, int pData)
          VAR(TX_byte) <<= 1;
          VAR(TX_count)--;                  
          break;
-
    }
 }
 
