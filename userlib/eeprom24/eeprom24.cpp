@@ -1,7 +1,7 @@
 // =============================================================================
-// Component Name: I2C 24xxx series EEPROM
+// Component Name: I2C 24xxx Serial EEPROM
 //
-// Copyright (C) 2009 Wojciech Stryjewski <thvortex@gmail.com>
+// Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
@@ -23,7 +23,7 @@
 #pragma hdrstop
 
 #include <blackbox.h>  // File located in <VMLAB install dir>/bin
-#include "eeprom24x.h"
+#include "eeprom24.h"
 
 int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {return 1;} // is DLL
 //==============================================================================
@@ -34,14 +34,14 @@ int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {return 1;} // is DLL
 DECLARE_PINS
    DIGITAL_BID(SDA, 1);
    DIGITAL_IN(SCL, 2);
-   DIGITAL_IN(WP, 3);
 END_PINS
 
 // This is the delay time from a falling edge on the SCL line to a transition
 // on the SDA line when the EEPROM is transmitting data. This delay is needed
 // so that other devices on the I2C bus do not mistake the changing data line
-// for a START or STOP condition.
-#define SCL_TO_OUT 300e-9 // TODO: This should be longer?
+// for a START or STOP condition. For 5V operating voltage, both the Atmel
+// and Microchip datasheets specify a max 900ns delay.
+#define SCL_TO_OUT 900e-9
 
 // Size of temporary string buffer for generating filenames and error messages
 #define MAXBUF 256
@@ -51,7 +51,7 @@ END_PINS
 // "Idle" state after an internal operation has finished. NTS_TXDONE is used
 // on a SCL falling edge to signal the final bit in a transmission has been
 // sent finished.
-enum { NTF_TX, NTF_TXDONE, NTF_IDLE };
+enum { NTF_IDLE, NTF_TX };
 
 // Internal device states assigned to VAR(State) and displayed in the GUI
 enum {
@@ -68,7 +68,7 @@ enum {
 
 // String descriptions for each ST_XXX enum constant (must be in same order)
 const char *State_text[] = {
-   "Idle", "Start", "Write (Address)", "Write (Address MSB)",
+   "Idle", "START", "Write (Address)", "Write (Address MSB)",
    "Write (Address LSB)", "Write (Data)", "Read", "Read (Finished)", "Busy"
 };
 
@@ -78,31 +78,30 @@ const char *State_text[] = {
 // To use a variable, do it through the the macro VAR(...)
 //
 DECLARE_VAR
-   int Write_Count;    // Number of bytes received during sequential write
+   int Write_count;    // Number of bytes received during sequential write
    int Pointer;        // Memory pointer within EEPROM for read/write
-   char *Memory;       // Pointer to malloc()ed memory holdinf EEPROM contents
+   int Pointer_temp;   // New or previous pointer used by write operation
+   UCHAR *Memory;      // Pointer to malloc()ed memory holding EEPROM contents
 
    int State;          // One of the ST_XXX enum constants
    bool Dirty;         // True if the GUI needs to be refreshed
    
    int Pointer_mask;   // Pointer bitmask based on total EEPROM memory size
    int Page_mask;      // Pointer bitmask based on sequential write page size
-   int Protect_size;   // Size of EEPROM memory write-protected by WP pin
    int Slave_addr;     // I2C slave address assigned to this EEPROM
    int Slave_mask;     // Bitmask indicating which Slave_addr bits are used
-   int Slave_ptr_mask; // Part of slave address used as memory address MSbs
+   int Slave_ptr_mask; // Part of slave address used as memory address bits
    double Delay;       // Delay in seconds for write operations to complete
    
-   UCHAR RX_Byte;      // Receive data shifted in from SDA pin
-   UCHAR TX_Byte;      // Transmit data waiting to shift out on SDA pin
-   char RX_Count;      // Number of bits left to receive in current word
-   char TX_Count;      // Number of bits left to transmit in current word
-   bool TX_Active;     // True if a TX operation begun and still in progress
+   UCHAR RX_byte;      // Receive data shifted in from SDA pin
+   USHORT TX_byte;     // Inverse of transmit data to shift out on SDA pin
+   char RX_count;      // Number of bits left to receive in current word
+   char TX_count;      // Number of bits left to transmit in current word
    
    bool Log;           // True if the "Log" checkbox button checked
    bool Break;         // True if the "Break on error" checkbox button checked
       
-   LOGIC SDA_State;    // TODO: DELETE ME ONCE ON_DIGITAL_EDGE WORKS
+   LOGIC SDA_state;    // TODO: DELETE ME ONCE ON_DIGITAL_IN_EDGE WORKS
 END_VAR
 
 // You can delare also globals variable outside DECLARE_VAR / END_VAR, but if
@@ -118,12 +117,48 @@ USE_WINDOW(WINDOW_USER_1);
 // =============================================================================
 // Helper Functions
 
-// Shortcuts for common operations on the I2C bus
-inline void Tx(char pData) { VAR(TX_Count) = 8; VAR(TX_Byte) = pData; }
-inline void Tx_Ack()       { VAR(TX_Count) = 1; VAR(TX_Byte) = 0; }
-inline void Tx_Nak()       { VAR(TX_Count) = 1; VAR(TX_Byte) = 0x80; }
-inline void Rx()           { VAR(RX_Count) = 8; VAR(RX_Byte) = 0; }
-inline void Rx_Ack()       { VAR(RX_Count) = 1; VAR(RX_Byte) = 0; }
+void Tx(UCHAR pData, bool pAck = false)
+//*************************
+// Transmit the 8-bit pData value and afterwards setup to receive a single
+// acknowledgment bit from the master. If pAck is true then also transmit
+// a single ACK bit (i.e. a 0 on the I2C bus) immediately before transmiting
+// pData.
+{
+   // Transmit 8-bit pData with an optional ACK preceeding it. VAR(TX_byte)
+   // is a USHORT and is shifted out on the SDA line in MSb first order,
+   // therefore pData must be left aligned within the USHORT. Note that
+   // VAR(TX_count) is always 1 more than the number of data bits to
+   // transmit; after the entire value is transmitted, an additional 1 bit
+   // is transmitted which serves to tri-state the I2C bus and allow an
+   // acknowledgment or a START/STOP condition to be received. Also note that
+   // VAR(TX_byte) actually holds the inverse of the transmit data; using
+   // an inverse makes it a little simpler to combine pData along with the
+   // trailing 1 bit (for tri-stating the bus) and when needed the preceeding
+   // 0 ACK bit.
+   if(pAck){
+      VAR(TX_count) = 10;
+      VAR(TX_byte) = ~pData << 7;
+   } else {
+      VAR(TX_count) = 9;
+      VAR(TX_byte) = ~pData << 8;
+   }   
+   
+   VAR(RX_count) = 1;
+   VAR(RX_byte) = 0;
+}
+
+void Rx()
+//*************************
+// First transmit a single ACK bit to acknowledge a previously received byte,
+// and then setup to receive another byte.
+{
+   // See comments in Tx() for how VAR(TX_count) and VAR(TX_byte) is used
+   VAR(TX_count) = 2;
+   VAR(TX_byte) = 0x8000;
+   
+   VAR(RX_count) = 8;
+   VAR(RX_byte) = 0;
+}
 
 void Log(const char *pFormat, ...)
 //*************************
@@ -150,62 +185,248 @@ void Error(const char *pMessage)
 //*************************
 // If the "Break on error" button is checked, then breakpoint the simulation
 // with the specified error message. If "Break on error" is not checked but
-// the "Log" button is, then PRINT() the error message with an "ERROR: "
-// prefix. If neither button is checked then do nothin.
+// the "Log" button is, then simply PRINT() the error to the Messages window.
+// If neither button is checked then do nothing.
 {
    if(VAR(Break)) {
       BREAK(pMessage);
    } else if(VAR(Log)) {
-      Log("ERROR: ", pMessage);
+      Log("%s", pMessage);
    }
+}
+
+bool On_Start_or_Stop()
+//**********************
+// Called by either On_Start() or On_Stop() to check for behavior that is
+// common to both START and STOP conditions. If the function returns true
+// then On_Start() and On_Stop() will return immediately without performing
+// the usual START/STOP handling.
+{
+   switch(VAR(State)) { 
+
+      // If busy after write operation then ignore all I2C bus activity
+      case ST_BUSY:
+         return true;
+   
+      // A START/STOP should not occur while still receiving the slave address
+      // from a previous START or while still receiving the EEPROM memory
+      // address at the beginning of a write operation.
+      case ST_START:   
+      case ST_ADDR:    
+      case ST_ADDR_MSB:
+      case ST_ADDR_LSB:
+         Error("Unexpected START/STOP before command finished");
+         break;
+
+      // During read operation, the master should respond with a NAK
+      // on the last byte before sending a START or STOP
+      case ST_READ:
+         Error("Unexpected START/STOP without receiving NAK");
+         break;
+
+      // During write mode, a START/STOP finishes the write operation and
+      // begins a busy cycle. However, the START/STOP should only occur
+      // after a complete byte was received.
+      case ST_WRITE:
+         Log("Total %d bytes written to EEPROM", VAR(Write_count));
+
+         // Check for START/STOP in the middle of byte
+         if(VAR(RX_count) != 7) {
+            Error("Unexpected START/STOP during byte write");
+         }
+         
+         // Schedule busy time if <Delay> is non-zero and data was written
+         if(VAR(Delay) > 0 && VAR(Write_count)) {
+            REMIND_ME(VAR(Delay), NTF_IDLE);
+            VAR(State) = ST_BUSY;
+            VAR(Dirty) = true;
+            return true;
+         }
+         break;
+
+      // Accept START/STOP; EEPROM not actively using I2C bus
+      case ST_READ_NAK:
+      case ST_IDLE:
+         break;
+   }
+   
+   // Allow On_Start() or On_Stop() to continue with regular processing
+   return false;
 }
 
 void On_Start()
 //**********************
-// Called by On_digital_in_edge() in response to START condition on I2C bus
+// Called by On_digital_in_edge() in response to START condition on I2C bus.
 {
-   // EEPROM is ready to receive I2C slave address word
-   // TODO: Go into START state; START may complete WRITE operations
+   // Handle common START/STOP behavior; return if in/entering ST_BUSY state
+   // If ST_BUSY was just entered, then cancel any RX/TX operations so the
+   // EEPROM does not interfere with the I2C bus until ST_BUSY is over
+   if(On_Start_or_Stop()) {
+      VAR(TX_count) = 0;   
+      VAR(RX_count) = 0;
+      return;
+   }
    
-   // TODO: Signal an error if in the middle of certain operations
-   
-   Rx();
+   // Setup to receive the I2C slave address if allowed by On_Start_or_Stop()
+   VAR(RX_count) = 8;
+   VAR(RX_byte) = 0;
+   VAR(State) = ST_START;
+   VAR(Dirty) = true;
 }
 
 void On_Stop()
 //**********************
 // Called by On_digital_in_edge() in response to STOP condition on I2C bus
 {
-   // TODO: Stop condition only allowed after 0 or 1 bit received   
-   // TODO: Go into IDLE state
+   // Handle common START/STOP behavior; ignore == true if entering ST_BUSY
+   bool ignore = On_Start_or_Stop();
+
+   // Always cancel any pending RX or TX operations
+   VAR(TX_count) = 0;   
+   VAR(RX_count) = 0;
    
-   // Cancel any pending RX or TX operations
-   VAR(TX_Active) = false;
-   VAR(TX_Count) = 0;   
-   VAR(RX_Count) = 0;
+   // Await a new START condition if allowed by On_Start_or_Stop()
+   if(!ignore) {
+      VAR(State) = ST_IDLE;
+      VAR(Dirty) = true;
+   }
+}
+
+void On_read_byte(bool pAck)
+//**********************
+// Called from On_Rx() when a read mode has been requested. This function
+// transmits the data byte at the current pointer address in EEPROM memory and
+// then increments the pointer (if the pointer reaches the end of memory, it
+// wraps back around to address zero). When reading the very first byte in a
+// transfer, pAck is set to true so that an ACK bit is sent to acknowledge the
+// slave address that was just received.
+{
+   UCHAR data = VAR(Memory)[VAR(Pointer)];
+
+   Log("Read EEPROM[$%05X]=$%02X", VAR(Pointer), data);
+
+   VAR(Pointer) = (VAR(Pointer) + 1) & VAR(Pointer_mask);   
+   Tx(data, pAck);
+}
+
+void On_write_byte(UCHAR pData)
+//**********************
+// Called from On_Rx() when a new data byte is received for writing to EEPROM
+// memory. The address pointer is incremented after the write (if the pointer
+// reached the end of the current page, it wraps back around to the start
+// of the same page). This function also issues when the address pointer
+// wraps and when the entire page has been filled up
+{
+   Log("Write EEPROM[$%05X]=$%02X", VAR(Pointer), pData);
+   VAR(Memory)[VAR(Pointer)] = pData;
+   
+   // Check if this write has wrapped around to beginning of page
+   if(VAR(Pointer) < VAR(Pointer_temp)) {
+      Error("EEPROM address wrapped to start of page");
+   }
+
+   // Increment pointer and wrap around within the same page. The current
+   // pointer value is saved in VAR(Pointer_temp) so that a wrap around can
+   // be detected by the next call to On_write_byte().
+   VAR(Pointer_temp) = VAR(Pointer);
+   VAR(Pointer) = VAR(Pointer) & (VAR(Pointer_mask) ^ VAR(Page_mask));
+   VAR(Pointer) |= (VAR(Pointer_temp) + 1) & VAR(Page_mask);
+   
+   // Cannot write more than one page of data to EEPROM memory.
+   if(VAR(Write_count) < VAR(Page_mask) + 1) {
+      VAR(Write_count)++;
+   } else {
+      Error("Page buffer full; previous byte lost");
+   }
 }
 
 void On_Rx(UCHAR pData)
 //**********************
 // Called by On_digital_in_edge() when the requested number of bits in
-// VAR(RX_Count) has been shifted in and the received data is stored in
-// VAR(RX_Byte).
+// VAR(RX_count) has been shifted in and the received data is stored in
+// VAR(RX_byte).
 {
-   char buf[64];
-   snprintf(buf, 64, "RX: %02X", pData);
-   PRINT(buf);
-      
-   // TODO: Transmit ACK if not busy and EEPROM in write mode
-   Tx_Ack();
-}
+   switch(VAR(State)) {
+ 
+      // Slave address and read/write flag received after START condition
+      case ST_START:
 
-void On_Tx()
-//**********************
-// Called by On_remind_me() when the requested number of bits in VAR(TX_Count)
-// has been shifted out from VAR(TX_Byte).
-{
-   // TODO (write mode): Setup to receive the next byte
-   Rx();
+         // If slave address match then decode the read/write flag
+         if((pData & VAR(Slave_mask)) == VAR(Slave_addr)) {
+
+            // If read mode requested, no address bytes have to be received
+            if(pData & 1) {
+               VAR(State) = ST_READ;
+               On_read_byte(true);
+               
+            // If write mode requsted, EEPROMS with 4096 bytes or more will
+            // require 2 address bytes to be received, while smaller EEPROMS
+            // require only 1 address byte. Also extract the LSbs of the slave
+            // address and use them as the MSbs of the address pointer if
+            // required by the EEPROM memory size.
+            } else {
+               if(VAR(Pointer_mask) >= 0xFFF) {
+                  VAR(State) = ST_ADDR_MSB;
+                  VAR(Pointer_temp) = (pData & VAR(Slave_ptr_mask)) << 15;
+               } else {
+                  VAR(State) = ST_ADDR;
+                  VAR(Pointer_temp) = (pData & VAR(Slave_ptr_mask)) << 7;
+               }
+               Rx();
+            }
+
+         // If no address match, return to ST_IDLE and await next START
+         } else {
+            VAR(State) = ST_IDLE;
+         }
+         
+         break;
+
+      // Most significant address byte read; setup to read address LSB
+      case ST_ADDR_MSB:
+         VAR(Pointer_temp) |= (pData << 8);
+
+         VAR(State) = ST_ADDR_LSB;
+         Rx();
+         break;
+
+      // 2nd (or only) byte of write address received. Set the EEPROM address
+      // pointer and prepare to receive data for writing
+      case ST_ADDR:
+      case ST_ADDR_LSB:
+         VAR(Pointer_temp) = (VAR(Pointer_temp) | pData) & VAR(Pointer_mask);
+         VAR(Pointer) = VAR(Pointer_temp);
+         VAR(Write_count) = 0;
+         Log("Set EEPROM address = $%05X", VAR(Pointer));
+
+         VAR(State) = ST_WRITE;
+         Rx();
+         break;
+         
+      // New data byte received during EEPROM write operation
+      case ST_WRITE:
+         On_write_byte(pData);
+         Rx();
+         break;
+
+      // Received acknowledgment after transmitting byte during read operation
+      case ST_READ:
+      
+         // If ACK (i.e. a 0 bit) received, transmit the next byte. Otherwise
+         // stop further transmission and await a START/STOP condition.
+         if(pData == 0) {
+            On_read_byte(false);                 
+         } else {
+            VAR(State) = ST_READ_NAK;
+         }
+         break;
+         
+      default:
+         BREAK("Unexpected internal state in On_Rx()");
+         break;
+   }
+   
+   VAR(Dirty) = true;
 }
 
 // =============================================================================
@@ -239,9 +460,8 @@ const char *On_create()
 
    // Specify default values for optional parameters
    VAR(Delay) = 0;         // No write delay; fastest possible simulation
-   VAR(Slave_addr) = 0x50; // Default slave address: 1010xxx
-   VAR(Slave_mask) = 0x78; // Default slave address mask: 1111000
-   VAR(Protect_size) = VAR(Pointer_mask) + 1; // Protect entire EEPROM
+   VAR(Slave_addr) = 0x50; // Standard EEPROM address: 1010xxx
+   VAR(Slave_mask) = 0x78; // EEPROM with A2-A0 pins not used: 1111000
    
    // <Delay> is the delay (in seconds) for write operations to complete
    if(paramCount >= 3) {
@@ -250,7 +470,7 @@ const char *On_create()
 
    // <SlaveAddr> and <SlaveMask> specify the I2C address used by EEPROM
    if(paramCount == 4) {
-      return "<SlaveAddr> and <SlaveMask> parameters must be included together";
+      return "<SlaveAddr> and <SlaveMask> parameters must be used together";
    }
    if(paramCount >= 5) {
       VAR(Slave_addr) = GET_PARAM(4);
@@ -282,21 +502,16 @@ const char *On_create()
       default: VAR(Slave_ptr_mask) = 0x0; break;
    }
    VAR(Slave_mask) &= ~VAR(Slave_ptr_mask);
-   
-   // <ProtectSizeL2> is number of bytes protected by WP pin (in log base 2)
-   if(paramCount >= 6) {
-      int protectSize = GET_PARAM(6);
-      if(protectSize < 0 || protectSize > memorySize) {
-         return "<ProtectSizeL2> parameter must be an integer 0 to <MemorySizeL2>";
-      }
-      VAR(Protect_size) = (1 << protectSize);
-   }
+   VAR(Slave_addr) &= VAR(Slave_mask);
    
    // Allocate enough memory to store all of the EEPROM contents
-   VAR(Memory) = (char *) malloc(VAR(Pointer_mask) + 1);
+   VAR(Memory) = (UCHAR *) malloc(VAR(Pointer_mask) + 1);
    if(VAR(Memory) == NULL) {
       return "Could not allocate memory";
    }
+   
+   // Initialize EEPROM contents to fully erased (0xFF) state
+   memset(VAR(Memory), 0xFF, VAR(Pointer_mask) + 1);
    
    return NULL;
 }
@@ -311,12 +526,14 @@ void On_window_init(HWND pHandle)
    char strBuffer[8];
 
    // Initialize the "I2C Slave Address" display in the GUI based on what the
-   // user specified in the <SlaveAddress> and <SlaveMask> parameters
+   // user specified in the <SlaveAddress> and <SlaveMask> parameters, and
+   // based on how many bits of the slave address are used to specify the
+   // EEPROM page address.
    for(int i = 0; i < 7; i++) {
       int bit = 1 << (7 - i);
 
       if(VAR(Slave_ptr_mask) & bit) {
-         strBuffer[i] = 'a';
+         strBuffer[i] = 'p';
       } else if(!(VAR(Slave_mask) & bit)) {
          strBuffer[i] = 'x';
       } else {
@@ -343,8 +560,8 @@ void On_simulation_begin()
 // here Open files; allocate memory, etc.
 {
    // TODO: DELETE THIS ONCE ON_DIGITAL_EDGE WORKS FOR INPUTS
-   SET_DRIVE(SDA, false);
-   VAR(SDA_State) = GET_LOGIC(SDA);
+   //SET_DRIVE(SDA, false);
+   VAR(SDA_state) = GET_LOGIC(SDA);
    
    // Initialize internal variables to power-on state and update GUI
    VAR(State) = ST_IDLE;
@@ -385,40 +602,24 @@ void On_digital_in_edge(PIN pDigitalIn, EDGE pEdge, double pTime)
       // shifted on the falling edge after a short delay.
       case SCL:
       
-         // If both RX and TX data pending, then it's a bug in the component
-         if(VAR(RX_Count) && VAR(TX_Count)) {
-            BREAK("Internal error (RX and TX at the same time)");
-            return;
-         }
-      
          // Data is shifted in MSb first. Don't try to receive if the last TX
          // bit has just been shifted out, because this rising edge will be
          // used by the master to sample the last bit.
-         if(pEdge == RISE && VAR(RX_Count) && !VAR(TX_Active)) {
-            VAR(RX_Byte) <<= 1;
-            VAR(RX_Byte) |= (GET_LOGIC(SDA) == 1);
-            VAR(RX_Count)--;
+         // TODO: Finish this comment
+         if(pEdge == RISE && VAR(RX_count) && !VAR(TX_count)) {
+            VAR(RX_byte) <<= 1;
+            VAR(RX_byte) |= (GET_LOGIC(SDA) == 1);
+            VAR(RX_count)--;
                         
             // If all expected bits eceived, call On_Rx() to handle the data
-            if(VAR(RX_Count) == 0) {
-               On_Rx(VAR(RX_Byte));
+            if(VAR(RX_count) == 0) {
+               On_Rx(VAR(RX_byte));
             }
          }
                
-         if(pEdge == FALL) {     
-         
-            // Pending TX data is shifted out 300ns after falling SCL edge
-            if(VAR(TX_Count)) {
-               VAR(TX_Active) = true;
-               REMIND_ME(SCL_TO_OUT, NTF_TX);
-               
-            // Otherwise, if the last TX bit has been shifted out on the previous
-            // falling edge, then switch the SDA line back to input on this edge
-            // (after 300ns) so that an acknowledgment or a START/STOP condition
-            // can be detected.
-            } else if(VAR(TX_Active)) {
-               REMIND_ME(SCL_TO_OUT, NTF_TXDONE);
-            }
+         // Pending TX data is shifted out 300ns after falling SCL edge
+         if(pEdge == FALL && VAR(TX_count)) {     
+            REMIND_ME(SCL_TO_OUT, NTF_TX);
          }
          
          break;
@@ -431,10 +632,11 @@ void On_remind_me(double pTime, int pData)
 {
    switch(pData) {
    
-      // An internal operation has finished. EEPROM is once again ready to
-      // receive a new slave address on the I2C bus.
+      // An internal write operation has finished. EEPROM is once again
+      // ready to respond to I2C bus activity
       case NTF_IDLE:
-         VAR(RX_Count) = 8; // TODO: Only change state; START handles this     
+         VAR(State) = ST_IDLE;
+         VAR(Dirty) = true;
          break;
 
       // Shift out the next data bit
@@ -444,49 +646,27 @@ void On_remind_me(double pTime, int pData)
          // be interpreted as a START or STOP condition.
          if(GET_LOGIC(SCL) == 1) {
             Error("Clock on SCL pin changing too fast");
-            return;
          }
          
          // If no data left to transmit, then it's a bug in the component
-         if(!VAR(TX_Count)) {
+         if(!VAR(TX_count)) {
             BREAK("Internal error: (No data to TX)");
             return;
          }
 
          // Data is shifted out MSb first. Because SDA is open-collector, a 0
          // bit is actively driven on SDA and a 1 bit tri-states SDA and lets
-         // the pull-up resistor generate the high logic value.
-         if(VAR(TX_Byte) & 0x80) {
-            SET_DRIVE(SDA, false);            
-         } else {
+         // the pull-up resistor generate the high logic value. Note that the
+         // data in TX_byte is actually inverted so a 0 bit in the variable is
+         // output as a 1 bit on SDA and vice-versa.
+         if(VAR(TX_byte) & 0x8000) {
             SET_DRIVE(SDA, true);
             SET_LOGIC(SDA, 0);
+         } else {
+            SET_DRIVE(SDA, false);            
          }
-         VAR(TX_Byte) <<= 1;
-         VAR(TX_Count)--;
-         
-         break;
-         
-      // Transmission finished; set SDA line back to tri-state for input
-      case NTF_TXDONE:
-
-         // Verify SCL is still low, otherwise a transition on SDA would
-         // be interpreted as a START or STOP condition.
-         if(GET_LOGIC(SCL) == 1) {
-            Error("Clock on SCL pin changing too fast");
-            return;
-         }
-
-         // If not all data transmitted, then it's a bug in the component
-         if(VAR(TX_Count)) {
-            BREAK("Internal error: (Pending data to TX)");
-            return;
-         }
-         
-         SET_DRIVE(SDA, false);
-         VAR(TX_Active) = false;
-         On_Tx();
-         
+         VAR(TX_byte) <<= 1;
+         VAR(TX_count)--;                  
          break;
 
    }
@@ -505,7 +685,11 @@ void On_gadget_notify(GADGET pGadgetId, int pCode)
       case GDT_VIEW:
       case GDT_LOAD:
       case GDT_SAVE:
+      
+      // Initialize EEPROM contents to fully erased (0xFF) state
       case GDT_ERASE:
+         Log("Entire EEPROM erased to $FF");
+         memset(VAR(Memory), 0xFF, VAR(Pointer_mask) + 1);
          break;
    }
 }
@@ -528,8 +712,8 @@ void On_update_tick(double pTime)
 void On_time_step(double pTime)
 // TODO: DELETE THIS ONCE ON_DIGITAL_EDGE WORKS FOR SDA
 {
-   if(!GET_DRIVE(SDA) && GET_LOGIC(SDA) != VAR(SDA_State)) {
-      VAR(SDA_State) = GET_LOGIC(SDA);
-      On_digital_in_edge(SDA, VAR(SDA_State) ? RISE : FALL, pTime);
+   if(!GET_DRIVE(SDA) && GET_LOGIC(SDA) != VAR(SDA_state)) {
+      VAR(SDA_state) = GET_LOGIC(SDA);
+      On_digital_in_edge(SDA, VAR(SDA_state) ? RISE : FALL, pTime);
    }
 }

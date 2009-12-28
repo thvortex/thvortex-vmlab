@@ -1,7 +1,7 @@
 // =============================================================================
-// Component Name: I2C 24xxx series EEPROM
+// Component Name: I2C 24xxx Serial EEPROM
 //
-// Copyright (C) 2009 Wojciech Stryjewski <thvortex@gmail.com>
+// Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
@@ -23,7 +23,7 @@
 #define RC_INVOKED 1
 #endif
 #include <blackbox.h>  // File located in <VMLAB install dir>/bin
-#include "eeprom24x.h"
+#include "eeprom24.h"
 
 // Windows dimensions
 // ******************
@@ -57,7 +57,7 @@ FONT 8, "MS Sans Serif"
    //***************************************************************************
 
    CONTROL "Status:", -1, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE, 6, 36, 24, 10 
-   CONTROL "?", GDT_STATUS, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE, 31, 36, 70, 10 
+   CONTROL "?", GDT_STATUS, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE, 30, 36, 70, 10 
 
    CONTROL "I²C Slave Address:", -1, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE, 6, 24, 60, 10 
    CONTROL "", GDT_SLAVE, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE, 68, 24, 34, 10 
@@ -74,3 +74,38 @@ FONT 8, "MS Sans Serif"
    CONTROL "Erase", GDT_ERASE, BUTTON, BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 217, 11, 26, 12 
 }
 
+// Info for use in User Library Browser
+INFO_BITMAP BITMAP "eeprom24.bmp"
+STRINGTABLE
+{
+   INFO_DESCRIPTION, "I2C 24xxx Serial EEPROM"
+   INFO_TEMPLATE, "X _eeprom24 <MemorySize> <PageSize> [<Delay> <SlaveAddress> <SlaveMask>] <SDA> <SCL>"
+   INFO_USAGE,
+"Describe here how the cell must be used, properties,\
+parameters, hints, etc. up to a max of 4095 characteres"
+}
+
+// Info displayed under "Version" tab in Windows Explorer. Due to a serious bug
+// in the Borland RC compiler, all values must end with an explicit NULL.
+VS_VERSION VERSIONINFO
+   FILEVERSION       0,1,0,0
+   PRODUCTVERSION    3,15,2,0
+   FILEOS            VOS__WINDOWS32
+   FILETYPE          VFT_DLL
+   {
+      BLOCK "StringFileInfo"
+      {
+         BLOCK "040904E4"
+         {
+         VALUE "CompanyName",      "Wojciech Stryjewski\0"
+         VALUE "FileDescription",  "I2C 24xx Serial EEPROM\0"
+         VALUE "FileVersion",      "v0.1\0"
+         VALUE "InternalName",     "EEPROM24\0"
+         VALUE "LegalCopyright",   "GNU LGPL v2.1+\0"
+         VALUE "OriginalFilename", "eeprom24.dll\0"
+         VALUE "ProductName",      "VMLAB\0"
+         VALUE "ProductVersion",   "3.15B\0"
+         }
+      }
+      BLOCK "VarFileInfo" { VALUE "Translation", 0x0409 0x04E4 }
+   }
