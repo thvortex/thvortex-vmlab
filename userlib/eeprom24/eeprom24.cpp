@@ -1,5 +1,36 @@
 // =============================================================================
-// Component Name: I2C 24xxx Serial EEPROM
+// Component Name: eeprom24 v0.1
+//
+// Simulation of a generic 24xxx series I2C serial EEPROM
+//
+// X _eeprom24x <MemorySize> <PageSize> [<Delay> <SlaveAddress> <SlaveMask>]
+// + <SDA> <SCL>
+//
+// The <SDA> and <SCL> pins are respectively the serial data and serial clock
+// used by the I2C bus. The <MemorySize> parameter specifies the total EEPROM
+// size in bytes, and the <PageSize> parameter specifies the maximum number of
+// bytes that can be written to the EEPROM with a single I2C write command.
+// Both <MemorySize> and <PageSize> must both be given as "log base 2" of the
+// actual byte size. For example a <MemorySize> of "12" would actually specfy
+// 4096 bytes since 2 to the power of 12 equals 4096.
+//
+// After data is written to memory, the EEPROM will go into a busy state for
+// the duration of time given by the optional <Delay> parameter. During this
+// busy time, the EEPROM does not respond to any commands on the I2C bus.
+// If <Delay> is omitted, then it defaults to 0s which results in no busy
+// time; in other words, after a memory write operation, the EEPROM will be
+// immediately ready to accept another command.
+//
+// The optional <SlaveAddress> parameter specifies the 7-bit I2C slave address
+// to which the EEPROM responds. The <SlaveMask> parameter is a bitmask
+// indicating which bits in <SlaveAddress> are actually significant when
+// performing the address comparison; a 0 bit in <SlaveMask> means that the
+// corresponding bit in <SlaveAddress> is a "don't care". If present, both
+// parameters must be used together and both are specified as decimal numbers.
+// If these paremeters are omitted, the default I2C address is "1010xxx".
+//
+// Version History:
+// v0.1 ??/??/?? - Initial public release
 //
 // Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
 //

@@ -1,5 +1,5 @@
 // =============================================================================
-// Component Name: I2C 24xxx Serial EEPROM
+// Component Name: eeprom24 v0.1
 //
 // Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
 //
@@ -81,8 +81,26 @@ STRINGTABLE
    INFO_DESCRIPTION, "I2C 24xxx Serial EEPROM"
    INFO_TEMPLATE, "X _eeprom24 <MemorySize> <PageSize> [<Delay> <SlaveAddress> <SlaveMask>] <SDA> <SCL>"
    INFO_USAGE,
-"Describe here how the cell must be used, properties,\
-parameters, hints, etc. up to a max of 4095 characteres"
+"The <SDA> and <SCL> pins are respectively the serial data and serial clock\
+used by the I2C bus. The <MemorySize> parameter specifies the total EEPROM\
+size in bytes, and the <PageSize> parameter specifies the maximum number of\
+bytes that can be written to the EEPROM with a single I2C write command.\
+Both <MemorySize> and <PageSize> must both be given as \"log base 2\" of the\
+actual byte size. For example a <MemorySize> of \"12\" would actually specfy\
+4096 bytes since 2 to the power of 12 equals 4096.\n\
+After data is written to memory, the EEPROM will go into a busy state for\
+the duration of time given by the optional <Delay> parameter. During this\
+busy time, the EEPROM does not respond to any commands on the I2C bus.\
+If <Delay> is omitted, then it defaults to 0s which results in no busy\
+time; in other words, after a memory write operation, the EEPROM will be\
+immediately ready to accept another command.\n\
+The optional <SlaveAddress> parameter specifies the 7-bit I2C slave address\
+to which the EEPROM responds. The <SlaveMask> parameter is a bitmask\
+indicating which bits in <SlaveAddress> are actually significant when\
+performing the address comparison; a 0 bit in <SlaveMask> means that the\
+corresponding bit in <SlaveAddress> is a \"don't care\". If present, both\
+parameters must be used together and both are specified as decimal numbers.\
+If these paremeters are omitted, the default I2C address is \"1010xxx\"."
 }
 
 // Info displayed under "Version" tab in Windows Explorer. Due to a serious bug
@@ -98,10 +116,10 @@ VS_VERSION VERSIONINFO
          BLOCK "040904E4"
          {
          VALUE "CompanyName",      "Wojciech Stryjewski\0"
-         VALUE "FileDescription",  "I2C 24xx Serial EEPROM\0"
+         VALUE "FileDescription",  "I2C 24xxx Serial EEPROM\0"
          VALUE "FileVersion",      "v0.1\0"
          VALUE "InternalName",     "EEPROM24\0"
-         VALUE "LegalCopyright",   "GNU LGPL v2.1+\0"
+         VALUE "LegalCopyright",   "2009-2010, GNU LGPL v2.1+\0"
          VALUE "OriginalFilename", "eeprom24.dll\0"
          VALUE "ProductName",      "VMLAB\0"
          VALUE "ProductVersion",   "3.15B\0"
