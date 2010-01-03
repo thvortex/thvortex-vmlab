@@ -5,12 +5,8 @@
 // show how to implement special registers functionality. This could be valid
 // also for Mega48 and Mega88, with minor modifications.
 //
-// Version History:
-// v0.1 05/24/09 - Initial public release by AMcTools
-// v0.2 09/15/09 - PRR/GTTR improvements to support TIMER0 model
-//
 // Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
-// Copyright (C) 2009 Wojciech Stryjewski <thvortex@gmail.com>
+// Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
@@ -51,44 +47,44 @@ WINDOW_USER_1 DIALOG 0, 0, 232, 87
 STYLE WS_CHILD | WS_VISIBLE
 FONT 8, "MS Sans Serif"
 {
- CONTROL "", EXPAND_FRAME, "button", BS_GROUPBOX | WS_CHILD | WS_VISIBLE | WS_GROUP, 2, 0, 227, 84
+ CONTROL "", EXPAND_FRAME, "button", BS_GROUPBOX | WS_CHILD | WS_VISIBLE | WS_GROUP, 2, 0, 226, 84
  CONTROL "", EXPAND_BUTTON, "button", BS_PUSHLIKE | BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE, 7, 0, 8, 8
 
  CONTROL "%", GADGET1 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 13, 29, 8
- CONTROL "", GADGET1, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 35, 12, 42, 10
+ CONTROL "", GADGET1, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 12, 42, 10
 
- CONTROL "%", GADGET2 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 79, 13, 29, 8
- CONTROL "", GADGET2, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 110, 12, 42, 10
+ CONTROL "%", GADGET2 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 77, 13, 29, 8
+ CONTROL "", GADGET2, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 107, 12, 42, 10
 
- CONTROL "%", GADGET3 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 153, 13, 29, 8
- CONTROL "", GADGET3, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 184, 12, 42, 10
+ CONTROL "%", GADGET3 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 152, 13, 29, 8
+ CONTROL "", GADGET3, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 182, 12, 42, 10
 
- CONTROL "", GADGET4, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 35, 24, 42, 10
+ CONTROL "", GADGET4, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 24, 42, 10
  CONTROL "%", GADGET4 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 25, 29, 8
 
- CONTROL "", GADGET5, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 110, 24, 42, 10
- CONTROL "%", GADGET5 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 79, 25, 29, 8
+ CONTROL "", GADGET5, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 107, 24, 42, 10
+ CONTROL "%", GADGET5 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 77, 25, 29, 8
 
- CONTROL "", GADGET6, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 184, 24, 42, 10
- CONTROL "%", GADGET6 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 153, 25, 29, 8
+ CONTROL "", GADGET6, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 182, 24, 42, 10
+ CONTROL "%", GADGET6 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 152, 25, 29, 8
 
- CONTROL "", GADGET7, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 35, 36, 42, 10
+ CONTROL "", GADGET7, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 36, 42, 10
  CONTROL "%", GADGET7 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 37, 29, 8
 
- CONTROL "", GADGET8, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 110, 36, 42, 10
- CONTROL "%", GADGET8 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 79, 37, 29, 8
+ CONTROL "", GADGET8, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 107, 36, 42, 10
+ CONTROL "%", GADGET8 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 77, 37, 29, 8
 
- CONTROL "", GADGET9, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 184, 36, 42, 10
- CONTROL "%", GADGET9 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 153, 37, 29, 8
+ CONTROL "", GADGET9, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 182, 36, 42, 10
+ CONTROL "%", GADGET9 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 152, 37, 29, 8
 
- CONTROL "", GADGET10, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 35, 48, 42, 10
+ CONTROL "", GADGET10, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 48, 42, 10
  CONTROL "%", GADGET10 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 49, 29, 8
 
- CONTROL "", GADGET11, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 110, 48, 42, 10
- CONTROL "%", GADGET11 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 79, 49, 29, 8
+ CONTROL "", GADGET11, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 107, 48, 42, 10
+ CONTROL "%", GADGET11 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 77, 49, 29, 8
 
- CONTROL "", GADGET12, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 184, 48, 42, 10
- CONTROL "%", GADGET12 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 153, 49, 29, 8
+ CONTROL "", GADGET12, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 182, 48, 42, 10
+ CONTROL "%", GADGET12 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 152, 49, 29, 8
 
  CONTROL "External", GADGET13, "button", BS_PUSHBUTTON | BS_CENTER | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 68, 66, 50, 12
  CONTROL "Brown-out", GADGET14, "button", BS_PUSHBUTTON | BS_CENTER | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 120, 66, 50, 12
@@ -97,3 +93,27 @@ FONT 8, "MS Sans Serif"
  CONTROL "Force RESET:", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 12, 68, 48, 8
 }
 
+// Info displayed under "Version" tab in Windows Explorer. Due to a serious bug
+// in the Borland RC compiler, all values must end with an explicit NULL.
+VS_VERSION VERSIONINFO
+FILEVERSION       0,3,0,0
+PRODUCTVERSION    3,15,0,0
+FILEOS            VOS__WINDOWS32
+FILETYPE          VFT_DLL
+{
+   BLOCK "StringFileInfo"
+   {
+      BLOCK "040904E4"
+      {
+         VALUE "CompanyName",      "Advanced MicroControllers Tools, Wojciech Stryjewski\0"
+         VALUE "FileDescription",  "ATmega168 Special Purpose Peripheral\0"
+         VALUE "FileVersion",      "v0.3\0"
+         VALUE "InternalName",     "DUMMY\0"
+         VALUE "LegalCopyright",   "2009-2010, GNU LGPL v2.1+\0"
+         VALUE "OriginalFilename", "dummy_168.dll\0"
+         VALUE "ProductName",      "VMLAB\0"
+         VALUE "ProductVersion",   "3.15\0"
+      }
+   }
+   BLOCK "VarFileInfo" { VALUE "Translation", 0x0409 0x04E4 }
+}

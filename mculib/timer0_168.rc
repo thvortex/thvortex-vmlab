@@ -6,7 +6,7 @@
 // v1.0 09/15/09 - Fully implemented model
 //
 // Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
-// Copyright (C) 2009 Wojciech Stryjewski <thvortex@gmail.com>
+// Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
@@ -74,3 +74,27 @@ FONT 8, "MS Sans Serif"
  CONTROL "BUF", GDT_BUF, "static", SS_LEFT | WS_CHILD | WS_VISIBLE | WS_DISABLED, 149, 13, 16, 8
 }
 
+// Info displayed under "Version" tab in Windows Explorer. Due to a serious bug
+// in the Borland RC compiler, all values must end with an explicit NULL.
+VS_VERSION VERSIONINFO
+FILEVERSION       0,3,0,0
+PRODUCTVERSION    3,15,0,0
+FILEOS            VOS__WINDOWS32
+FILETYPE          VFT_DLL
+{
+   BLOCK "StringFileInfo"
+   {
+      BLOCK "040904E4"
+      {
+         VALUE "CompanyName",      "Advanced MicroControllers Tools, Wojciech Stryjewski\0"
+         VALUE "FileDescription",  "ATmega168 TIMER0 Peripheral\0"
+         VALUE "FileVersion",      "v0.3\0"
+         VALUE "InternalName",     "TIMER0\0"
+         VALUE "LegalCopyright",   "2009-2010, GNU LGPL v2.1+\0"
+         VALUE "OriginalFilename", "timer0_168.dll\0"
+         VALUE "ProductName",      "VMLAB\0"
+         VALUE "ProductVersion",   "3.15\0"
+      }
+   }
+   BLOCK "VarFileInfo" { VALUE "Translation", 0x0409 0x04E4 }
+}
