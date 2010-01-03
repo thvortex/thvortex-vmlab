@@ -1,0 +1,116 @@
+// =============================================================================
+// Component Name: ATMega168 "TIMERN" (16 bit) peripheral.
+//
+// Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
+// Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation; either version 2.1 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+//
+// =============================================================================
+
+#define IS_PERIPHERAL
+#include <blackbox.h>
+#include "timerN_168.h"
+
+// Syntax to add/modify new controls
+// *********************************
+//
+// CONTROL <text>, <gadget ID>, <class>, <styles>, <left>, <top>, <width>, <height>
+//
+//    <text>: Any text; this will be displayed in the control (if applies).
+//    <gadget ID>: A value, GADGET0 to GADGET31, or -1 for non-modifiable controls
+//       (decorations, texts, etc)
+//    <class>: A Win32 standard control class name: "button", "static", "listbox", etc.
+//       or... own custom-class name (for advanced Win32 users)
+//    <styles>: A valid Win32 attribute/style for the control.
+//    <left>, <top>, <width>, <height>: Coordinates in dialog units (not pixels!)
+
+
+// Register displays must be always be coded with the "WORD_8_VIEW_c" class name.
+//
+WINDOW_USER_1 DIALOG 0, 0, WIDTH, 99
+STYLE WS_CHILD | WS_VISIBLE
+FONT 8, "MS Sans Serif"
+{
+ CONTROL "", EXPAND_FRAME, "button", BS_GROUPBOX | WS_CHILD | WS_VISIBLE | WS_GROUP, 2, 0, WIDTH - 6, 97
+ CONTROL "", EXPAND_BUTTON, "button", BS_AUTOCHECKBOX | BS_PUSHLIKE | WS_CHILD | WS_VISIBLE, 7, 0, 8, 8
+
+ CONTROL "", GDT_TCNTnH + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 13, 28, 8 
+ CONTROL "", GDT_TCNTnH, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 12, 42, 10 
+ CONTROL "L", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 13, 6, 8
+ CONTROL "", GDT_TCNTnL, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 86, 12, 42, 10 
+ CONTROL "", GDT_OCRnAH + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 25, 30, 8 
+ CONTROL "", GDT_OCRnAH, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 24, 42, 10 
+ CONTROL "L", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 25, 6, 8 
+ CONTROL "", GDT_OCRnAL, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 86, 24, 42, 10 
+ CONTROL "", GDT_OCRnBH + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 37, 30, 8 
+ CONTROL "", GDT_OCRnBH, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 36, 42, 10 
+ CONTROL "L", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 37, 6, 8 
+ CONTROL "", GDT_OCRnBL, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 86, 36, 42, 10 
+ CONTROL "", GDT_ICRnH + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 49, 30, 8 
+ CONTROL "", GDT_ICRnH, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 48, 42, 10 
+ CONTROL "L", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 49, 6, 8 
+ CONTROL "", GDT_ICRnL, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 86, 48, 42, 10 
+ CONTROL "", GDT_TCCRnA + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 61, 30, 8 
+ CONTROL "", GDT_TCCRnA, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 60, 42, 10 
+ CONTROL "", GDT_TCCRnB + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 73, 30, 8 
+ CONTROL "", GDT_TCCRnB, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 72, 42, 10 
+ CONTROL "", GDT_TCCRnC + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 85, 30, 8 
+ CONTROL "", GDT_TCCRnC, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 84, 42, 10 
+
+ CONTROL "BUFFR", GDT_BUF, "static", SS_LEFT | WS_CHILD | WS_VISIBLE | WS_DISABLED, 141, 13, 24, 8 
+ CONTROL "$????", GDT_BUFA, "static", SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE | WS_DISABLED, 141, 24, 23, 10 
+ CONTROL "$????", GDT_BUFB, "static", SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE | WS_DISABLED, 141, 36, 23, 10 
+ CONTROL "TMP",    -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 148, 49, 16, 8 
+ CONTROL "$??",   GDT_TMP, "static", SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 149, 60, 15, 10 
+ CONTROL "Log",   GDT_LOG, "button", BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE, 137, 85, 25, 8 
+ CONTROL "Mode:",  -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 61, 28, 10 
+ CONTROL "?",     GDT_MODE, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 102, 61, 40, 10 
+ CONTROL "Clock:", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 73, 28, 10 
+ CONTROL "?",     GDT_CLOCK, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 102, 73, 50, 10 
+ CONTROL "Top:",   -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 85, 17, 10 
+ CONTROL "?",     GDT_TOP, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 97, 85, 22, 10
+ 
+ // Hidden dummy register labels to keep VMLAB happy
+ CONTROL "", GDT_TCNTnL + 100, "static", WS_CHILD, 0, 0, 0, 0 
+ CONTROL "", GDT_OCRnAL + 100, "static", WS_CHILD, 0, 0, 0, 0
+ CONTROL "", GDT_OCRnBL + 100, "static", WS_CHILD, 0, 0, 0, 0
+ CONTROL "", GDT_ICRnL + 100, "static", WS_CHILD, 0, 0, 0, 0
+}
+
+// Info displayed under "Version" tab in Windows Explorer. Due to a serious bug
+// in the Borland RC compiler, all values must end with an explicit NULL.
+VS_VERSION VERSIONINFO
+FILEVERSION       0,3,0,0
+PRODUCTVERSION    3,15,0,0
+FILEOS            VOS__WINDOWS32
+FILETYPE          VFT_DLL
+{
+   BLOCK "StringFileInfo"
+   {
+      BLOCK "040904E4"
+      {
+         VALUE "CompanyName",      "Advanced MicroControllers Tools, Wojciech Stryjewski\0"
+         VALUE "FileDescription",  "ATmega168 16-bit Timer Peripheral\0"
+         VALUE "FileVersion",      "v0.3\0"
+         VALUE "InternalName",     "TIMERN\0"
+         VALUE "LegalCopyright",   "2009-2010, GNU LGPL v2.1+\0"
+         VALUE "OriginalFilename", "timerN_168.dll\0"
+         VALUE "ProductName",      "VMLAB\0"
+         VALUE "ProductVersion",   "3.15\0"
+      }
+   }
+   BLOCK "VarFileInfo" { VALUE "Translation", 0x0409 0x04E4 }
+}
