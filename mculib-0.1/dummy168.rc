@@ -1,0 +1,99 @@
+// =============================================================================
+// Component Name: ATMega168 "DUMMY" peripheral.
+//
+// This is still preliminary code for the ATMega168 "DUMMY" peripheral, to 
+// show how to implement special registers functionality. This could be valid
+// also for Mega48 and Mega88, with minor modifications.
+//
+// Version History:
+// v0.1 05/24/09 - Initial public release by AMcTools
+// v0.2 09/15/09 - PRR/GTTR improvements to support TIMER0 model
+//
+// Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
+// Copyright (C) 2009 Wojciech Stryjewski <thvortex@gmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation; either version 2.1 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+//
+// =============================================================================
+
+#define IS_DUMMY_PERIPHERAL  // This is also necessary here
+#include "C:\VMLAB\bin\blackbox.h"
+
+// Syntax, to add/modify new controls
+// **********************************
+//
+// CONTROL <text>, <gadget ID>, <class>, <styles>, <left>, <top>, <width>, <height>
+//
+//    <text>: Any text; this will be displayed in the control (if applies).
+//    <gadget ID>: A value, GADGET0 to GADGET31, or -1 for non-modifiable controls
+//       (decorations, texts, etc)
+//    <class>: A Win32 standard control class name: "button", "static", "listbox", etc.
+//       or... own custom-class name (for advanced Win32 users)
+//    <styles>: A valid Win32 attribute/style for the control.
+//    <left>, <top>, <width>, <height>: Coordinates in dialog units (not pixels!)
+
+
+// Register displays must be always be coded with the "WORD_8_VIEW_c" class name
+//
+WINDOW_USER_1 DIALOG 0, 0, 232, 87
+STYLE WS_CHILD | WS_VISIBLE
+FONT 8, "MS Sans Serif"
+{
+ CONTROL "", EXPAND_FRAME, "button", BS_GROUPBOX | WS_CHILD | WS_VISIBLE | WS_GROUP, 2, 0, 227, 84
+ CONTROL "", EXPAND_BUTTON, "button", BS_PUSHLIKE | BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE, 7, 0, 8, 8
+
+ CONTROL "%", GADGET1 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 13, 29, 8
+ CONTROL "", GADGET1, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 35, 12, 42, 10
+
+ CONTROL "%", GADGET2 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 79, 13, 29, 8
+ CONTROL "", GADGET2, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 110, 12, 42, 10
+
+ CONTROL "%", GADGET3 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 153, 13, 29, 8
+ CONTROL "", GADGET3, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 184, 12, 42, 10
+
+ CONTROL "", GADGET4, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 35, 24, 42, 10
+ CONTROL "%", GADGET4 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 25, 29, 8
+
+ CONTROL "", GADGET5, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 110, 24, 42, 10
+ CONTROL "%", GADGET5 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 79, 25, 29, 8
+
+ CONTROL "", GADGET6, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 184, 24, 42, 10
+ CONTROL "%", GADGET6 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 153, 25, 29, 8
+
+ CONTROL "", GADGET7, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 35, 36, 42, 10
+ CONTROL "%", GADGET7 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 37, 29, 8
+
+ CONTROL "", GADGET8, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 110, 36, 42, 10
+ CONTROL "%", GADGET8 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 79, 37, 29, 8
+
+ CONTROL "", GADGET9, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 184, 36, 42, 10
+ CONTROL "%", GADGET9 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 153, 37, 29, 8
+
+ CONTROL "", GADGET10, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 35, 48, 42, 10
+ CONTROL "%", GADGET10 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 49, 29, 8
+
+ CONTROL "", GADGET11, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 110, 48, 42, 10
+ CONTROL "%", GADGET11 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 79, 49, 29, 8
+
+ CONTROL "", GADGET12, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 184, 48, 42, 10
+ CONTROL "%", GADGET12 + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 153, 49, 29, 8
+
+ CONTROL "External", GADGET13, "button", BS_PUSHBUTTON | BS_CENTER | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 68, 66, 50, 12
+ CONTROL "Brown-out", GADGET14, "button", BS_PUSHBUTTON | BS_CENTER | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 120, 66, 50, 12
+ CONTROL "", -1, "static", SS_ETCHEDFRAME | WS_CHILD | WS_VISIBLE, 4, 62, 222, 1
+ CONTROL "Watchdog", GADGET15, "button", BS_PUSHBUTTON | BS_CENTER | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 172, 66, 50, 12
+ CONTROL "Force RESET:", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 12, 68, 48, 8
+}
+
