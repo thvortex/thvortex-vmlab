@@ -5,12 +5,8 @@
 // show how to implement special registers functionality. This could be valid
 // also for Mega48 and Mega88, with minor modifications.
 //
-// Version History:
-// v0.1 05/24/09 - Initial public release by AMcTools
-// v0.2 09/15/09 - PRR/GTTR improvements to support TIMER0 model
-//
 // Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
-// Copyright (C) 2009 Wojciech Stryjewski <thvortex@gmail.com>
+// Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by

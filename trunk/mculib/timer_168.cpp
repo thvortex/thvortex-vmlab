@@ -1,9 +1,9 @@
 // =============================================================================
 // Common implementation code for the newest style AVR TIMER models. This file
 // is included by a different .cpp file for each of the timer types.
-////
+//
 // Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
-// Copyright (C) 2009 Wojciech Stryjewski <thvortex@gmail.com>
+// Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
@@ -132,6 +132,7 @@ typedef struct {
 // code more readable
 //
 DECLARE_VAR
+   BOOL _Dirty;            // True if the GUI needs refreshing
    int _Clock_source;      // Internal, external, ...
    bool _PRR;              // True if disabled by PRR
    int _Sleep_mode;        // One of the SLEEP_xxx constants
@@ -170,7 +171,8 @@ DECLARE_VAR
    WORD8 _READ_buffer;     // For high-byte access in On_register_read()   
 #endif
 END_VAR
-#define Clock_source VAR(_Clock_source)     // To simplify readability...
+#define Dirty VAR(_Dirty)                  // To simplify readability...
+#define Clock_source VAR(_Clock_source)
 #define PRR VAR(_PRR)
 #define Sleep_mode VAR(_Sleep_mode)
 #define Prescaler_index VAR(_Prescaler_index)
@@ -277,7 +279,6 @@ void Async_sleep_check(int pMode);
 void Update_waveform();
 void Update_compare_actions();
 void Update_clock_source();
-void Update_display();
 void Action_on_port(PORT, int, BOOL pMode = Counting_up);
 void Log(const char *pFormat, ...);
 void Log_register_write(int pId, WORD8 pData, unsigned char pMask);
@@ -326,7 +327,7 @@ void On_simulation_end()
    Prescaler_index = 0;
    Update_OCR = VAL_NONE;
    Async = ASY_NONE;
-   Update_display();
+   Dirty = true;
 }
 
 WORD8 *On_register_read(REGISTER_ID pId)
@@ -373,12 +374,12 @@ WORD8 *On_register_read(REGISTER_ID pId)
       case TCNTn:
          TMP_regid = -TCNTnH;
          TMP_buffer = REG(TCNTnH);
-         Update_display();
+         Dirty = true;
          break;
       case ICRn:
          TMP_regid = -ICRnH;
          TMP_buffer = REG(ICRnH);
-         Update_display();
+         Dirty = true;
          break;
    }
    
@@ -509,7 +510,7 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
           REG(TCCRnA) = pData & 0xF3;   // $F3 = read-only bits mask
           Update_waveform();
           Update_compare_actions();
-          Update_display();
+          Dirty = true;
        end_register
 
        case_register(TCCRnB, TCCRnB_MASK) // Timer Control Register B
@@ -518,7 +519,7 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
           Update_waveform();
           Update_compare_actions();
           Update_clock_source();
-          Update_display();
+          Dirty = true;
 
 #ifdef TIMER_N
        end_register
@@ -531,12 +532,12 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
           // compare actions, we do this check after the modes are updated.
           if(pData[7] == 1) {       // FOC0A = bit 7
              if(Waveform == WAVE_NORMAL || Waveform == WAVE_CTC)
-                Log("OC0A force compare");
+                Log("OCnA force compare");
                 Action_on_port(OCA, Action_comp_A);
           }
           if(pData[6] == 1) {       // FOC0B = bit 6
              if(Waveform == WAVE_NORMAL || Waveform == WAVE_CTC)
-                Log("OC0B force compare");
+                Log("OCnB force compare");
                 Action_on_port(OCB, Action_comp_B);
           }
        end_register
@@ -551,7 +552,7 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
           Log_register_write(pId, pData, 0xFF);
           TMP_regid = pId;
           TMP_buffer = pData;
-          Update_display();       
+          Dirty = true;       
           break;
 
        case_register(ICRn, 0xFF)  // Input Capture Register
@@ -581,7 +582,7 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
           if(!Update_OCR) {
              REGHL(OCRnA) = pData & MASK[Top];;
           }
-          Update_display(); // Buffer static control need update
+          Dirty = true; // Buffer static control need update
        end_register
 
        case_register(OCRnB, 0xFF) // Output Compare Register B
@@ -590,7 +591,7 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
           if(!Update_OCR) {
              REGHL(OCRnB) = pData & MASK[Top];;
           }
-          Update_display();
+          Dirty = true;
        end_register
        
 #ifdef TIMER_2
@@ -635,7 +636,7 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
           Update_waveform();
           Update_compare_actions();
           Update_clock_source();
-          Update_display();
+          Dirty = true;
        end_register
 #endif
    }
@@ -779,7 +780,7 @@ void On_reset(int pCause)
    Async = ASY_NONE;
    Async_prescaler = 0;
    Async_interrupt = 0;
-   Update_display();
+   Dirty = true;
 }
 
 void On_notify(int pWhat)
@@ -795,7 +796,7 @@ void On_notify(int pWhat)
          PRR = false;
          if(wasDisabled & !Is_disabled()) {
             Log("Enabled by PRR");
-            Update_display();
+            Dirty = true;
             Go();
          }
          break;
@@ -805,7 +806,7 @@ void On_notify(int pWhat)
          PRR = true;
          if(!wasDisabled && Is_disabled()) {
             Log("Disabled by PRR");
-            Update_display();
+            Dirty = true;
             Go();
          }
          break;
@@ -813,7 +814,7 @@ void On_notify(int pWhat)
       case NTF_TSM:                  // Timer sync mode; prescaler reset continuously asserted
          Log("Started TSM");
          TSM = true;
-         Update_display();
+         Dirty = true;
          break;
 
       case NTF_PSR:                  // Prescaler reset.
@@ -831,7 +832,7 @@ void On_notify(int pWhat)
          if (TSM) {              
             Log("Finished TSM");         
             TSM = false;
-            Update_display();
+            Dirty = true;
          }
          
          Go();
@@ -881,7 +882,7 @@ void On_sleep(int pMode)
       }
 #endif         
    
-      Update_display();
+      Dirty = true;
       Go();
    }
 }
@@ -1174,7 +1175,6 @@ void Count()
          }
 #ifdef TIMER_N         
          // If using ICR as TOP, then generate interrupt on compare match
-         // TODO: Does CPU write to TCNTn also block this interrupt?
          if(Top == VAL_ICR && REGHL(TCNTn) == REGHL(ICRn)) {
             SET_INTERRUPT_FLAG(CAPT, FLAG_SET);
          }
@@ -1456,21 +1456,21 @@ void Update_compare_actions()
    int rc;
    rc = TAKEOVER_PORT(OCA, Action_comp_A != ACT_NONE);
    if(rc == PORT_NOT_OUTPUT) {
-      WARNING("OC0A enabled but pin not defined as output in DDR", CAT_TIMER,
+      WARNING("OCnA enabled but pin not defined as output in DDR", CAT_TIMER,
          WARN_TIMERS_OUTPUT);
    }
    rc = TAKEOVER_PORT(OCB, Action_comp_B != ACT_NONE && Action_comp_B != ACT_RESERVED);
    if(rc == PORT_NOT_OUTPUT) {
-      WARNING("OC0B enabled but pin not defined as output in DDR", CAT_TIMER,
+      WARNING("OCnB enabled but pin not defined as output in DDR", CAT_TIMER,
          WARN_TIMERS_OUTPUT);
    }
    
    // Log any changes to the compare output modes
    if(oldAction_comp_A != Action_comp_A) {
-      Log("Updating OC0A mode: %s", Action_text[Action_comp_A]);
+      Log("Updating OCnA mode: %s", Action_text[Action_comp_A]);
    }
    if(oldAction_comp_B != Action_comp_B) {
-      Log("Updating OC0B mode: %s", Action_text[Action_comp_B]);
+      Log("Updating OCnB mode: %s", Action_text[Action_comp_B]);
    }
 }
 
@@ -1534,12 +1534,17 @@ void Update_clock_source()
    Go();
 }
 
-void Update_display()
-//*******************
-// Refresh static controls showing the status etc.
-// WORD_8_VIEW_c controls are refreshed automatically. No action is needed
+void On_update_tick(double pTime)
+//************************************************
+// Called periodically to refresh static controls showing the status, etc.
+// The GUI is only updated if VAR(Dirty) is true to indicate that internal
+// state has changed. WORD_8_VIEW_c controls are refreshed automatically. 
 {
-   //TODO: Make use of On_update_tick()
+   // Do nothing if state not changed since last On_update_tick()
+   if (!Dirty) {
+      return;
+   }
+   Dirty = false;
 
    SetWindowTextf(GET_HANDLE(GDT_CLOCK), Is_disabled() ? "Disabled" : "%s %s",
       Clock_text[Clock_source], Prescaler_text[Prescaler_index]);
