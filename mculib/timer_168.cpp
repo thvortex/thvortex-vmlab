@@ -530,15 +530,15 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
           // Handle FOC0A, FOC0B (Force Output Compare), only in non-PWM modes
           // Since writing TCCRnB could have changed the waveform mode and
           // compare actions, we do this check after the modes are updated.
-          if(pData[7] == 1) {       // FOC0A = bit 7
-             if(Waveform == WAVE_NORMAL || Waveform == WAVE_CTC)
+          if(Waveform == WAVE_NORMAL || Waveform == WAVE_CTC) {
+             if(pData[7] == 1) {       // FOC0A = bit 7
                 Log("OCnA force compare");
                 Action_on_port(OCA, Action_comp_A);
-          }
-          if(pData[6] == 1) {       // FOC0B = bit 6
-             if(Waveform == WAVE_NORMAL || Waveform == WAVE_CTC)
+             }
+             if(pData[6] == 1) {       // FOC0B = bit 6
                 Log("OCnB force compare");
                 Action_on_port(OCB, Action_comp_B);
+             }
           }
        end_register
 
