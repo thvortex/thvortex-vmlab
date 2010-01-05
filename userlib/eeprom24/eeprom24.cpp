@@ -17,7 +17,7 @@
 // After data is written to memory, the EEPROM will go into a busy state for
 // the duration of time given by the optional <Delay> parameter. During this
 // busy time, the EEPROM does not respond to any commands on the I2C bus.
-// If <Delay> is omitted, then it defaults to 0s which results in no busy
+// If <Delay> is omitted, then it defaults to 0 which results in no busy
 // time; in other words, after a memory write operation, the EEPROM will be
 // immediately ready to accept another command.
 //
@@ -79,9 +79,7 @@ END_PINS
 
 // Notify codes used with REMIND_ME(). NTF_TX shifts out the next data bit
 // after a SCL falling edge. NTF_IDLE switches from the "Busy" state to the
-// "Idle" state after an internal operation has finished. NTS_TXDONE is used
-// on a SCL falling edge to signal the final bit in a transmission has been
-// sent finished.
+// "Idle" state after an internal operation has finished.
 enum { NTF_IDLE, NTF_TX };
 
 // Internal device states assigned to VAR(State) and displayed in the GUI
@@ -89,8 +87,8 @@ enum {
    ST_IDLE,       // Initial state; awaiting START condition on I2C bus
    ST_START,      // START condition seen; awaiting slave address
    ST_ADDR,       // Begin write; awaiting single address byte
-   ST_ADDR_MSB,   // Begin write; awaiting 1st address byte for big EEPROMS
-   ST_ADDR_LSB,   // Begin write; awaiting 2nd address byte for big EEPROMS
+   ST_ADDR_MSB,   // Begin write; awaiting 1st address byte for big EEPROMs
+   ST_ADDR_LSB,   // Begin write; awaiting 2nd address byte for big EEPROMs
    ST_WRITE,      // Write operation; awaiting next data byte
    ST_READ,       // Read operation; ready to shift out next data byte
    ST_READ_NAK,   // Received NAK on read operation; awaiting STOP condition
@@ -201,7 +199,7 @@ void Log(const char *pFormat, ...)
       char strBuffer[MAXBUF];
       va_list argList;
 
-      snprintf(strBuffer, MAXBUF, "%s: ", GET_INSTANCE());
+      sprintf(strBuffer, "%s: ", GET_INSTANCE());
       int len = strlen(strBuffer);
 
       va_start(argList, pFormat);
@@ -475,20 +473,20 @@ const char *On_create()
    VAR(Slave_addr) = 0x50 << 1; // Standard EEPROM address: 1010xxx
    VAR(Slave_mask) = 0x78 << 1; // EEPROM with A2-A0 pins not used: 1111000
 
-   int paramCount = GET_PARAM(0);
+   int paramCount = (int) GET_PARAM(0);
    if(paramCount < 2) {
       return "<MemorySize> and <PageSize> parameters are required";
    }
       
    // <MemorySize> is the total EEPROM memory byte size (in log base 2)
-   int memorySize = GET_PARAM(1);
+   int memorySize = (int) GET_PARAM(1);
    if(memorySize < 0 || memorySize > 19) {
       return "<MemorySize> parameter must be an integer 0 to 19";
    }
    VAR(Pointer_mask) = (1 << memorySize) - 1;
    
    // <PageSize> is the sequential write page size (in log base 2)
-   int pageSize = GET_PARAM(2);
+   int pageSize = (int) GET_PARAM(2);
    if(pageSize < 0 || pageSize > memorySize) {
       return "<PageSize> parameter must be an integer 0 to <MemorySize>";
    }
@@ -504,11 +502,11 @@ const char *On_create()
       return "<SlaveAddr> and <SlaveMask> parameters must be used together";
    }
    if(paramCount >= 5) {
-      int slaveAddr = GET_PARAM(4);
+      int slaveAddr = (int) GET_PARAM(4);
       if(slaveAddr < 0 || slaveAddr > 127) {
          return "<SlaveAddr> must be an integer 0 to 127";
       }     
-      int slaveMask = GET_PARAM(5);
+      int slaveMask = (int) GET_PARAM(5);
       if(slaveMask < 0 || slaveMask > 127) {
          return "<SlaveMask> must be an integer 0 to 127";
       }
@@ -729,7 +727,7 @@ void On_update_tick(double pTime)
 {
    if(VAR(Dirty)) {
       char strBuffer[16];      
-      snprintf(strBuffer, 16, "$%05X", VAR(Pointer));
+      sprintf(strBuffer, "$%05X", VAR(Pointer));
       SetWindowText(GET_HANDLE(GDT_ADDR), strBuffer);
 
       SetWindowText(GET_HANDLE(GDT_STATUS), State_text[VAR(State)]);
