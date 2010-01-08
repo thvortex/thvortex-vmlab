@@ -33,7 +33,7 @@
 // On_notify() codes; shared by all peripheral modules. Be careful about inserting/removing
 // enums since the remaining ones are renumbered and this can cause compatibility issues
 // when some DLL files are not recompiled.
-enum {NTF_PRR0, NTF_PRR1, NTF_TSM, NTF_PSR, NTF_WDR};
+enum {NTF_PRR0, NTF_PRR1, NTF_TSM, NTF_PSR, NTF_WDR, NTF_WDRF1, NTF_WDRF0};
 
 char *hex(const WORD8 &pData)
 //*******************
