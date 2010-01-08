@@ -1,12 +1,8 @@
 // =============================================================================
 // Component Name: ATMega168 "TIMER0" peripheral.
 //
-// Version History:
-// v0.1 05/24/09 - Initial public release by AMcTools
-// v1.0 09/15/09 - Fully implemented model
-//
 // Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
-// Copyright (C) 2009 Wojciech Stryjewski <thvortex@gmail.com>
+// Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by

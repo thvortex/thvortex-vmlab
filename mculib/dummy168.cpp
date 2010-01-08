@@ -57,9 +57,6 @@ DECLARE_VAR
 END_VAR
 
 // Action codes to be used with REMIND_ME2() -> On_remind_me(),
-// or NOTIFY() -> On_notify(). For NOTIFY, use better a separated include file to share with
-// the other code files that handle them
-//
 enum {AUTOCLEAR_SELFPRGEN, AUTOCLEAR_CLKPCE, AUTOCLEAR_IVCE};
 
 const double Clock_presc_table[] = {1, 2, 4, 8, 16, 32, 64, 128, 256}; // For CLKPR
@@ -90,10 +87,9 @@ REGISTERS_VIEW
    DISPLAY(OSCCAL, GADGET10, CAL7, CAL6, CAL5, CAL4, CAL3, CAL2, CAL1, CAL0)
    DISPLAY(MCUCR,  GADGET11, *, *, *, PUD, *, *, IVSEL, IVCE)
    DISPLAY(MCUSR,  GADGET12, *, *, *, *, WDRF, BORF, EXTRF, PORF)
-
-   HIDDEN(GPIOR0);   //  No display box for these registers
-   HIDDEN(GPIOR1);   //
-   HIDDEN(GPIOR2);   //
+   DISPLAY(GPIOR0, GADGET16, *, *, *, *, *, *, *, *);
+   DISPLAY(GPIOR1, GADGET17, *, *, *, *, *, *, *, *);
+   DISPLAY(GPIOR2, GADGET18, *, *, *, *, *, *, *, *);
 
    // If a register is not included here (no DISPLAY() nor HIDDEN()), it will be 
    // considered as plain RAM, and no On_xxx (read/write) will be taken into
@@ -145,7 +141,7 @@ void On_simulation_begin()
          break;
 
       case 0x3: // Internal 128 kHz
-         PRINT("Selected 128KHz calibrated internal RC Oscillator (CKSEL fuses = 0011)");
+         PRINT("Selected 128KHz internal RC Oscillator (CKSEL fuses = 0011)");
          myClock = 128.0e3;
          break;
    }
@@ -207,6 +203,16 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
       // trigger interrupts immediately if GET_LOGIC shows low for interrupt
       // pins.
 
+      case_register(MCUSR, 0x0F)  // MCU Status Register
+      //-------------------------------------------------
+      // R/W bits = WDRF BORF EXTRF PORF (mask = 0x0F)     
+         
+         // Setting or clearing WDRF affects the watchdog timer bit WDE.
+         if(pData[3] != UNKNOWN) {
+            NOTIFY("WDOG", pData[3] ? NTF_WDRF1 : NTF_WDRF0);
+         }         
+      end_register
+            
       case_register(MCUCR, 0x13)  // MCU Control Register
       //-------------------------------------------------
       // R/W bits = PUD, IVSEL,IVCE (mask = 0x13)
@@ -367,8 +373,8 @@ int On_instruction(int pCode)
    switch(pCode) {
 
       case INSTR_WDR:
-      //-------------                       // Provisional stuff for test....
-         //NOTIFY("WDOG", NTF_WDR);         // a reset notification should be sent 
+      //-------------
+         NOTIFY("WDOG", NTF_WDR);           // a reset notification should be sent 
          break;                             // to the watchdog peripheral
 
       case INSTR_SLEEP:
