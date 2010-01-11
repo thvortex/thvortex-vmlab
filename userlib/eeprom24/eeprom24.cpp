@@ -56,7 +56,7 @@
 #include <blackbox.h>  // File located in <VMLAB install dir>/bin
 #include "eeprom24.h"
 
-int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {return 1;} // is DLL
+int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {OutputDebugString("WOOHOO"); return 1;} // is DLL
 //==============================================================================
 
 //==============================================================================
@@ -127,10 +127,8 @@ DECLARE_VAR
    char RX_count;      // Number of bits left to receive in current word
    char TX_count;      // Number of bits left to transmit in current word
    
-   bool Log;           // True if the "Log" checkbox button checked
+   bool Log;           // True if the "Log" checkbox button is checked
    bool Break;         // True if the "Break on error" checkbox button checked
-      
-   LOGIC SDA_state;    // TODO: DELETE ME ONCE ON_DIGITAL_IN_EDGE WORKS
 END_VAR
 
 // You can delare also globals variable outside DECLARE_VAR / END_VAR, but if
@@ -142,6 +140,89 @@ END_VAR
 // the dialog resource ID (from .RC file) or 0 if no window
 //
 USE_WINDOW(WINDOW_USER_1);
+
+// =============================================================================
+// Helper Classes
+
+class File
+//*********
+// Wrapper class around the stdio fopen(), fprintf(), fwrite(), etc. series of
+// functions. All member functions take care of performing runtime checking for
+// any possible I/O errors. If an error occurs, BREAK() is called to notify the
+// user and the File::Error exception is thrown. Using exceptions for error
+// handling makes the mainline code simpler since it doesn't have to manually
+// the return code of each operation to determine success or failure. However,
+// if an exception is not thrown when closing the file since it's not safe to
+// do so from the destructor.
+{
+   private:
+      const char *Name;  // File name passed to fopen(); for error msgs
+      FILE *File;             // The open file pointer returned by fopen()
+
+      void error(const char *pError)
+      //********************************
+      // Used by other functions to BREAK() with an error message
+      {
+         char strBuffer[MAXBUF];
+         sprintf(strBuffer, "%s \"%s\" file: %s", pError, Name, strerror(errno));
+         BREAK(strBuffer);
+      }
+      
+   public:
+      class Error {};         // Thrown if any I/O errors occur in File class
+      // TODO: class Error should inherit from std::exception
+      
+      File(const char *pName, const char *pMode) : File(NULL), Name(pName)
+      //********************************
+      // Constructor to open "pName" file using "pMode" for access
+      {
+         File = ::fopen(pName, pMode);
+         if(!File) {
+            error("Could not create or overwrite");
+            throw Error();
+         }
+      }
+      
+      ~File()
+      //********************************
+      // Destructor to close the file. If an error occurs while closing (e.g.
+      // disk full while flushing the stdio buffers), an exception is NOT
+      // thrown since doing so while C++ is handling another exception and
+      // unwinding the stack is not supported in C++ (process terminates).
+      {
+         if(File && fclose(File)) {
+            error("Error closing");
+         }
+      }
+      
+      void printf(const char *pFormat, ...)
+      //*************************
+      // Wrapper around the vfprintf() function
+      {
+         va_list argList;
+
+         va_start(argList, pFormat);
+         vfprintf(File, pFormat, argList);
+         va_end(argList);
+
+         if(ferror(File)) {
+            error("Could not write");
+            throw Error();
+         }
+      }
+      
+      void write(const char *pData, int pLength)
+      //*************************
+      // Wrapper around the fwrite() function
+      {
+         fwrite(pData, 1, pLength, File);
+
+         if(ferror(File)) {
+            error("Could not write");
+            throw Error();
+         }
+      }
+};
 
 // =============================================================================
 // Helper Functions
@@ -458,6 +539,148 @@ void On_Rx(UCHAR pData)
    VAR(Dirty) = true;
 }
 
+int Sum(int pValue)
+//********************
+// Return the sum obtained by adding the individual bytes of the pValue
+// integer together. Used for checksum calculations.
+{
+   int sum = 0;   
+   
+   for(int i = 0; i < 4; i++) {
+      sum += pValue & 0xFF;
+      pValue >>= 8;
+   }   
+
+   return sum;
+}
+
+// =============================================================================
+// Memory image loading and saving functions
+
+void Write_BIN(const char *pName)
+//********************
+// Write full EEPROM memory contents to a raw binary file. The file will be
+// the same size as the EEPROM memory.
+{
+   // Open file for writing in binary mode. The "b" specifier is needed so the
+   // stdio library does not try to translate "\n" characters written to the
+   // file into the "\r\n" line endings used by Windows.
+   File file(pName, "wb");
+   file.write(VAR(Memory), VAR(Pointer_mask) + 1);
+}
+
+void Write_HEX(const char *pName)
+//********************
+// Write EEPROM memory contents to an Intel HEX file. Sections of memory set
+// to $FF are omitted from the file since this is the default value. EEPROMs
+// larger than 16-bits will use the "Extended Linear Address" record.
+{
+   // The upper 16 bits of the last EEPROM address written to file. Used to
+   // detect when the "Extened Segment Address" should be written to file.
+   int segment = 0;
+
+   // Open file for writing in text mode. The "t" specifier is needed for the
+   // stdio library to translate "\n" characters written to the file into the
+   // "\r\n" used by Windows.
+   File file(pName, "wt");
+
+   // Write or skip over EEPROM contents one row (16 bytes) at a time.
+   for(int addr = 0; addr < VAR(Pointer_mask) + 1; addr += 0x10) {
+      UCHAR checksum;
+      int i;
+   
+      // If the entire row contains $FF bytes then don't write it to file
+      for(i = addr; i < addr + 0x10; i++) {
+         if(VAR(Memory)[i] != 0xFF) break;
+      }
+      if(i == addr + 0x10) continue;
+
+      // If the current "addr" has crossed into the next 16-bit boundry,
+      // then write an "Extended Linear Address" record. The checksum
+      // below is calculated as: 02 (for record byte count) + 04 (record
+      // type) + the sum of the individual "segment" bytes. Note that
+      // the two's complement used for the checksum is the same as negation.
+      if(addr >> 16 != segment) {         
+         segment = addr >> 0x10;
+         checksum = -(Sum(segment) + 0x06);
+         file.printf(":02000004%04X%02X\n", segment, checksum);
+      }
+
+      // Write beginning of "Data Record" and lower 16-bits of current "addr"
+      checksum = 0x10 + Sum(addr & 0xFF);
+      file.printf(":10%04X00", addr & 0xFF);
+      
+      // Write all bytes in the row while also updating the checksum
+      for(i = addr; i < addr + 0x10; i++) {
+         checksum += VAR(Memory)[i];
+         file.printf("%02X", VAR(Memory)[i]);
+      }
+      
+      // Finish the record by printing the checksum at the end
+      checksum = -checksum;
+      file.printf("%02X\n", checksum);
+   }
+   
+   // Write "End of File" record
+   file.printf(":00000001FF\n");
+}
+
+void Write_SREC(const char *pName)
+//********************
+// Write EEPROM memory contents to an Motorola S-Record File. Sections of
+// memory set to $FF are omitted from the file since this is the default
+// value. EEPROMs larger than 16-bits will use the larger address "S2"
+// record type.
+{
+   // Total number of "S1" and "S2" record written; for use in "S5" record
+   int total = 0;
+
+   // Open file for writing in text mode. The "t" specifier is needed for the
+   // stdio library to translate "\n" characters written to the file into the
+   // "\r\n" used by Windows.
+   File file(pName, "wt");
+
+   // Write or skip over EEPROM contents one row (16 bytes) at a time.
+   for(int addr = 0; addr < VAR(Pointer_mask) + 1; addr += 0x10) {
+      UCHAR checksum;
+      int i;
+   
+      // If the entire row contains $FF bytes then don't write it to file
+      for(i = addr; i < addr + 0x10; i++) {
+         if(VAR(Memory)[i] != 0xFF) break;
+      }
+      if(i == addr + 0x10) continue;
+
+      // Based on the current "addr" size, write beginning of either an "S1"
+      // or "S2" record type.
+      if(addr <= 0xFFFF) {
+         checksum = 0x13 + Sum(addr);
+         file.printf("S113%04X", addr);
+      } else {
+         checksum = 0x14 + Sum(addr);
+         file.printf("S214%06X", addr);
+      }
+      
+      // Write all bytes in the row while also updating the checksum
+      for(i = addr; i < addr + 0x10; i++) {
+         checksum += VAR(Memory)[i];
+         file.printf("%02X", VAR(Memory)[i]);
+      }
+      
+      // Finish the record by printing the checksum at the end
+      checksum = ~checksum;
+      file.printf("%02X\n", checksum);
+      total++;
+   }
+
+   // Write "S5" record containing count of "S1" and "S2" records written
+   UCHAR checksum = ~(0x03 + Sum(total));
+   file.printf("S503%04X%02X\n", total, checksum); 
+      
+   // Write "End of File" record
+   file.printf("S9030000FC\n");   
+}
+
 // =============================================================================
 // Callback functions. These functions are called by VMLAB at the proper time
 
@@ -480,8 +703,8 @@ const char *On_create()
       
    // <MemorySize> is the total EEPROM memory byte size (in log base 2)
    int memorySize = (int) GET_PARAM(1);
-   if(memorySize < 0 || memorySize > 19) {
-      return "<MemorySize> parameter must be an integer 0 to 19";
+   if(memorySize < 4 || memorySize > 19) {
+      return "<MemorySize> parameter must be an integer 4 to 19";
    }
    VAR(Pointer_mask) = (1 << memorySize) - 1;
    
@@ -588,9 +811,6 @@ void On_simulation_begin()
 // VMLAB informs you that the simulation is starting. Initialize pin values
 // here Open files; allocate memory, etc.
 {
-   // TODO: DELETE THIS ONCE ON_DIGITAL_EDGE WORKS FOR INPUTS
-   VAR(SDA_state) = GET_LOGIC(SDA);
-   
    // Initialize internal variables to power-on state and update GUI
    VAR(State) = ST_IDLE;
    VAR(Pointer) = 0x0;
@@ -732,14 +952,5 @@ void On_update_tick(double pTime)
 
       SetWindowText(GET_HANDLE(GDT_STATUS), State_text[VAR(State)]);
       VAR(Dirty) = false;
-   }
-}
-
-void On_time_step(double pTime)
-// TODO: DELETE THIS ONCE ON_DIGITAL_EDGE WORKS FOR SDA
-{
-   if(!GET_DRIVE(SDA) && GET_LOGIC(SDA) != VAR(SDA_state)) {
-      VAR(SDA_state) = GET_LOGIC(SDA);
-      On_digital_in_edge(SDA, VAR(SDA_state) ? RISE : FALL, pTime);
    }
 }
