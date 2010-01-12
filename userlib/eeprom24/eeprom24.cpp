@@ -56,9 +56,32 @@
 #include <blackbox.h>  // File located in <VMLAB install dir>/bin
 #include "eeprom24.h"
 
-int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {OutputDebugString("WOOHOO"); return 1;} // is DLL
+int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {return 1;} // is DLL
 //==============================================================================
 
+// String assigned to the lpstrFilter field of the OPENFILENAME structure. Used
+// by the "Open" and "Save" dialog boxes to display the pull-down list of
+// supported file types
+#define OPENFILENAME_FILTER \
+   "Intel HEX File (*.hex;*.eep)\0*.hex;*.eep\0" \
+   "Motorola S-Record File (*.s19)\0*.s19\0" \
+   "Atmel Generic File (*.gen)\0*.gen\0" \
+   "Binary File (*.*)\0*.*\0"
+
+// Flags field used in OPENFILENAME structure for "Save" diaog box
+// OFN_NOCHANGEDIR: Don't change VMLAB's working directory
+// OFN_OVERWRITEPROMPT: Ask before overwriting existing file
+// OFN_PATHMUSTEXIST: Directory locations must already exist
+#define SAVEFILENAME_FLAGS \
+   (OFN_NOCHANGEDIR | OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST)      
+
+// Flags field used in OPENFILENAME structure for "Open" diaog box
+// OFN_HIDEREADONLY: Hide "Read Only" checkbox in dialog
+// OFN_FILEMUSTEXIST: File names must already exist
+// OFN_PATHMUSTEXIST: Directory locations must already exist
+#define OPENFILENAME_FLAGS \
+   (OFN_HIDEREADONLY | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST)
+   
 //==============================================================================
 // Declare pins here
 //
@@ -134,6 +157,9 @@ END_VAR
 // You can delare also globals variable outside DECLARE_VAR / END_VAR, but if
 // multiple instances of this cell are placed, all these instances will
 // share the same variable.
+
+// Top-level VMLAB window. Used as parent window for Open/Save dialog boxes
+HWND VMLAB_Window;
 
 // ============================================================================
 // Say here if your component has an associated window or not. Pass as parameter
@@ -585,7 +611,7 @@ void Write_HEX(const char *pName)
    File file(pName, "wt");
 
    // Write or skip over EEPROM contents one row (16 bytes) at a time.
-   for(int addr = 0; addr < VAR(Pointer_mask) + 1; addr += 0x10) {
+   for(int addr = 0; addr <= VAR(Pointer_mask); addr += 0x10) {
       UCHAR checksum;
       int i;
    
@@ -627,7 +653,7 @@ void Write_HEX(const char *pName)
 
 void Write_SREC(const char *pName)
 //********************
-// Write EEPROM memory contents to an Motorola S-Record File. Sections of
+// Write EEPROM memory contents to a Motorola S-Record File. Sections of
 // memory set to $FF are omitted from the file since this is the default
 // value. EEPROMs larger than 16-bits will use the larger address "S2"
 // record type.
@@ -641,7 +667,7 @@ void Write_SREC(const char *pName)
    File file(pName, "wt");
 
    // Write or skip over EEPROM contents one row (16 bytes) at a time.
-   for(int addr = 0; addr < VAR(Pointer_mask) + 1; addr += 0x10) {
+   for(int addr = 0; addr <= VAR(Pointer_mask); addr += 0x10) {
       UCHAR checksum;
       int i;
    
@@ -679,6 +705,25 @@ void Write_SREC(const char *pName)
       
    // Write "End of File" record
    file.printf("S9030000FC\n");   
+}
+
+void Write_GEN16(const char *pName)
+//********************
+// Write EEPROM memory contents to an Atmel Generic file in 16/8 format. With
+// larger EEPROMs, only the first 65536 bytes can be saved in this format.
+// TODO: Issue warning if higher bytes have non $FF
+{
+   // Open file for writing in text mode. The "t" specifier is needed for the
+   // stdio library to translate "\n" characters written to the file into the
+   // "\r\n" used by Windows.
+   File file(pName, "wt");
+
+   // Use 16/8 format for smaller EEPROMs; only write non-$FF bytes
+   for(int addr = 0; addr <= (VAR(Pointer_mask) & 0xFFFF); addr++) {
+      if(VAR(Memory)[addr] != 0xFF) {
+         file.printf("%04X:%02X\n", addr, VAR(Memory)[addr]);
+      }
+   }
 }
 
 // =============================================================================
@@ -791,10 +836,17 @@ void On_window_init(HWND pHandle)
       } else {
          strBuffer[i] = (VAR(Slave_addr) & bit) ? '1' : '0';
       }
-   }
-   
+   }   
    strBuffer[7] = '\000';   
    SetWindowText(GET_HANDLE(GDT_SLAVE), strBuffer);
+   
+   // Find the top-level VMLAB window to use parent for Open/Save dialogs
+   if(VMLAB_Window == NULL) {
+      VMLAB_Window = pHandle;
+      while(HWND parent = GetParent(VMLAB_Window)) {
+         VMLAB_Window = parent;
+      }
+   }
 }
 
 void On_destroy()
@@ -923,14 +975,52 @@ void On_gadget_notify(GADGET pGadgetId, int pCode)
 // A window gadget (control) is sending a notification.
 // Handles button/checkbox clicks in the GUI.
 {
+   PRINT("On_gadget_notify()");
+
+   // Structure and pathname buffer for use with common dialog routines
+   char pathBuffer[MAX_PATH];
+   OPENFILENAME dlg;
+   
+   // Initialize parts of the OPENFILENAME structure that are common to
+   // both "Open" and "Save" dialog boxes. All unused, reserved, and output
+   // fields are initialized to zero.
+   memset(&dlg, 0, sizeof(OPENFILENAME));  // Initialize struct to zero         
+   dlg.lStructSize = sizeof(OPENFILENAME); // Structure size required
+   dlg.hwndOwner = VMLAB_Window;           // Owner window of Open/Save dialog
+   dlg.lpstrFilter = OPENFILENAME_FILTER;  // Supporte file types
+   dlg.lpstrFile = pathBuffer;             // Buffer to receive user's filename
+   dlg.nMaxFile = MAX_PATH;                // Total size of lpstrFile buffer
+   
    switch(pGadgetId) {
       case GDT_BREAK:   VAR(Break) ^= 1; break;         
       case GDT_LOG:     VAR(Log) ^= 1; break;
       
       // TODO: Not implemented yet
       case GDT_VIEW:
+         break;
+      
+      // Display common "Open" dialog box and load memory contents from file
       case GDT_LOAD:
-      case GDT_SAVE:
+         dlg.lpstrTitle = "Load EEPROM File"; // Dialog title
+         dlg.Flags = OPENFILENAME_FLAGS;      // Option flags
+
+         if(GetOpenFileName(&dlg)) {
+            PRINT("LOAD");
+            // TODO: Erase to $FF before loading new file         
+         }
+         
+         break;
+         
+      // Display common "Save" dialog box and write memory contents to file
+      case GDT_SAVE:         
+         dlg.lpstrTitle = "Save EEPROM File"; // Dialog title
+         dlg.Flags = SAVEFILENAME_FLAGS;      // Option flags
+         
+         if(GetSaveFileName(&dlg)) {
+            PRINT("SAVE");
+         }
+         
+         break;
       
       // Initialize EEPROM contents to fully erased (0xFF) state
       case GDT_ERASE:
