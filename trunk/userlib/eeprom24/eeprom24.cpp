@@ -1177,12 +1177,6 @@ void On_simulation_end()
    SetWindowText(GET_HANDLE(GDT_ADDR), "$?????");
    SetWindowText(GET_HANDLE(GDT_STATUS), "?");
    VAR(Dirty) = false;
-   
-   // TODO: Working directory test
-   if(FILE *temp = fopen("eeprom.prj", "r")) {
-      fclose(temp);
-      PRINT("STILL OK");
-   }
 }
 
 void On_digital_in_edge(PIN pDigitalIn, EDGE pEdge, double pTime)
