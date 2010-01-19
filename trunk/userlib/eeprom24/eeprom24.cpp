@@ -708,15 +708,15 @@ void Write_HEX(const char *pName)
       // below is calculated as: 02 (for record byte count) + 04 (record
       // type) + the sum of the individual "segment" bytes. Note that
       // the two's complement used for the checksum is the same as negation.
-      if(addr >> 16 != segment) {         
+      if(addr >> 0x10 != segment) {         
          segment = addr >> 0x10;
          checksum = -(Sum(segment) + 0x06);
          file.printf(":02000004%04X%02X\n", segment, checksum);
       }
 
       // Write beginning of "Data Record" and lower 16-bits of current "addr"
-      checksum = 0x10 + Sum(addr & 0xFF);
-      file.printf(":10%04X00", addr & 0xFF);
+      checksum = 0x10 + Sum(addr & 0xFFFF);
+      file.printf(":10%04X00", addr & 0xFFFF);
       
       // Write all bytes in the row while also updating the checksum
       for(i = addr; i < addr + 0x10; i++) {
@@ -1304,6 +1304,11 @@ void On_gadget_notify(GADGET pGadgetId, int pCode)
          dlg.Flags = OPENFILENAME_FLAGS;      // Option flags
 
          if(GetOpenFileName(&dlg)) {            
+            // Initialize EEPROM contents to fully erased (0xFF) state
+            // before loading data so that any unspecified "holes" in the
+            // file's address space end up as $FF
+            memset(VAR(Memory), 0xFF, VAR(Pointer_mask) + 1);
+
             // If an I/O error occurs, the File class will throw an exception
             // to abort the operation. The EEPROM memory may be partially
             // initialized if only part of the input file was read.
@@ -1314,6 +1319,8 @@ void On_gadget_notify(GADGET pGadgetId, int pCode)
                   case FT_GEN:   Read_GEN(pathBuffer); break;
                   //case FT_BIN: Read_BIN(pathBuffer); break;
                }
+               Log("EEPROM contents loaded from \"%s\"",
+                  &pathBuffer[dlg.nFileOffset]);
             }
             catch (File::Error) {}
          }
@@ -1336,6 +1343,8 @@ void On_gadget_notify(GADGET pGadgetId, int pCode)
                   case FT_GEN:  Write_GEN(pathBuffer); break;
                   case FT_BIN:  Write_BIN(pathBuffer); break;
                }
+               Log("EEPROM contents saved to \"%s\"",
+                  &pathBuffer[dlg.nFileOffset]);
             }
             catch (File::Error) {}
          }
