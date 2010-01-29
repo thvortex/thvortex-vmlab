@@ -548,13 +548,13 @@ class File
 //*********
 // Wrapper class around the stdio fopen(), fprintf(), fwrite(), etc. series of
 // functions. All member functions take care of performing runtime checking for
-// any possible I/O errors. If an error occurs, BREAK() is called to notify the
+// any possible I/O errors. If an error occurs, call File_Error() to notify the
 // user and the File::Error exception is thrown. Using exceptions for error
-// handling makes the mainline code simpler since it doesn't have to manually
+// handling makes the mainline code simpler since it doesn't have to check
 // the return code of each operation to determine success or failure. However,
-// if an exception is not thrown when closing the file since it's not safe to
+// no exception is not thrown when closing the file, because it's not safe to
 // do so from the destructor. Based on the pEofWanted constructor argument,
-// input routines like fscanf() and fread() will either return FALSE or throw
+// input routines like scanf() and read() will either return FALSE or throw
 // an exception.
 {
    private:
@@ -562,112 +562,141 @@ class File
       bool EOF_Wanted;   // True if EOF returns FALSE instead of throwing
       FILE *File;        // The open file pointer returned by fopen()
 
-      void error(const char *pError, bool pThrow = true, UINT pType = MB_ICONSTOP)
-      //********************************
-      // Used by other functions to BREAK() with an error message
-      {
-         // If error() is called due to end-of-file or a parsing error
-         // then errno == 0 since no actual I/O error has occurred
-         if(errno) {
-            File_Error(Name, pType, "%s: %s", pError, strerror(errno));
-         } else {
-            File_Error(Name, pType, "%s", pError);
-         }
-
-         if(pThrow) {
-            throw Error();
-         }
-      }
+      void error(const char *pError, bool pThrow = true, UINT pType = MB_ICONSTOP);
       
    public:
-      class Error {};         // Thrown if any I/O errors occur in File class
-      // TODO: class Error should inherit from std::exception
+      class Error {};    // Thrown if any I/O errors occur in File class
+
+      File(const char *pName, const char *pMode, bool pEofWanted = false);      
+      ~File();
       
-      File(const char *pName, const char *pMode, bool pEofWanted = false) :
-         File(NULL), Name(pName), EOF_Wanted(pEofWanted)
-      //********************************
-      // Constructor to open "pName" file using "pMode" for access. If
-      // the "pEofWanted" argument is true, then the scanf() and read()
-      // functions return false when an EOF is reached instead of throwing
-      // an exception.
-      {
-         File = ::fopen(pName, pMode);
-         if(!File) {
-            error("Cannot open file");
-         }
-      }
-      
-      ~File()
-      //********************************
-      // Destructor to close the file. If an error occurs while closing (e.g.
-      // disk full while flushing the stdio buffers), an exception is NOT
-      // thrown since doing so while C++ is handling another exception and
-      // unwinding the stack is not supported in C++ (process terminates).
-      {
-         if(File && fclose(File)) {
-            error("Error while closing file", false);
-         }
-      }
-      
-      void printf(const char *pFormat, ...)
-      //*************************
-      // Wrapper around the vfprintf() function
-      {
-         va_list argList;
-
-         va_start(argList, pFormat);
-         vfprintf(File, pFormat, argList);
-         va_end(argList);
-
-         if(ferror(File)) {
-            error("Cannot write to file");
-         }
-      }
-
-      bool scanf(int pExpectedCount, const char *pFormat, ...)
-      //*************************
-      // Wrapper around the fvscanf() function
-      {
-         va_list argList;
-
-         va_start(argList, pFormat);
-         int actualCount = vfscanf(File, pFormat, argList);
-         va_end(argList);
-         
-         if(actualCount != pExpectedCount) {
-            if(ferror(File)) {
-               error("Cannot read from file");
-            } else if(feof(File)) {
-               if(EOF_Wanted) {
-                  return false;
-               } else {
-                  error("Unexpected end-of-file", true, MB_ICONWARNING);
-               }
-            } else {
-               error("Unrecognized data in file; unknown file type");
-            }            
-         }
-         
-         return true;
-      }
-      
-      void write(const char *pData, int pLength)
-      //*************************
-      // Wrapper around the fwrite() function
-      {
-         fwrite(pData, 1, pLength, File);
-
-         if(ferror(File)) {
-            error("Cannot write to file");
-         }
-      }
+      void printf(const char *pFormat, ...);
+      bool scanf(int pExpectedCount, const char *pFormat, ...);
+      bool read(char *pData, int pLength);
+      void write(const char *pData, int pLength);
 };
+
+void File::error(const char *pError, bool pThrow, UINT pType)
+//********************************
+// Used by internal functions to display errors/warnings as a pop-up dialog
+{
+   // If error() is called due to end-of-file or a parsing error
+   // then errno == 0 since no actual I/O error has occurred
+   if(errno) {
+      File_Error(Name, pType, "%s: %s", pError, strerror(errno));
+   } else {
+      File_Error(Name, pType, "%s", pError);
+   }
+
+   if(pThrow) {
+      throw Error();
+   }
+}
+
+File::File(const char *pName, const char *pMode, bool pEofWanted) :
+   File(NULL), Name(pName), EOF_Wanted(pEofWanted)
+//********************************
+// Constructor to open "pName" file using "pMode" for access. If
+// the "pEofWanted" argument is true, then the scanf() and read()
+// functions return false when an EOF is reached instead of throwing
+// an exception.
+{
+   File = ::fopen(pName, pMode);
+   if(!File) {
+      error("Cannot open file");
+   }
+}
+
+File::~File()
+//********************************
+// Destructor to close the file. If an error occurs while closing (e.g.
+// disk full while flushing the stdio buffers), an exception is NOT
+// thrown since doing so while C++ is handling another exception and
+// unwinding the stack is not supported in C++ (process terminates).
+{
+   if(File && fclose(File)) {
+      error("Error while closing file", false);
+   }
+}
+
+bool File::scanf(int pExpectedCount, const char *pFormat, ...)
+//********************
+// Wrapper around the fvscanf() function
+{
+   va_list argList;
+
+   va_start(argList, pFormat);
+   int actualCount = vfscanf(File, pFormat, argList);
+   va_end(argList);
+   
+   if(actualCount != pExpectedCount) {
+      if(ferror(File)) {
+         error("Cannot read from file");
+      } else if(feof(File)) {
+         if(EOF_Wanted) {
+            return false;
+         } else {
+            error("Unexpected end-of-file", true, MB_ICONWARNING);
+         }
+      } else {
+         error("Unrecognized data in file; unknown file type");
+      }            
+   }
+   
+   return true;
+}
+
+void File::printf(const char *pFormat, ...)
+//********************
+// Wrapper around the vfprintf() function
+{
+   va_list argList;
+
+   va_start(argList, pFormat);
+   vfprintf(File, pFormat, argList);
+   va_end(argList);
+
+   if(ferror(File)) {
+      error("Cannot write to file");
+   }
+}
+
+bool File::read(char *pData, int pLength)
+//********************
+// Wrapper around the fread() function
+{
+   int actualCount = fread(pData, 1, pLength, File);
+
+   if(actualCount != pLength) {
+      if(ferror(File)) {
+         error("Cannot read from file");
+      } else if(feof(File)) {
+         if(EOF_Wanted) {
+            return false;
+         } else {
+            error("Unexpected end-of-file", true, MB_ICONWARNING);
+         }
+      } else {
+         error("Internal error; unknown fread() error");
+      }            
+   }
+   
+   return true;
+}
+
+void File::write(const char *pData, int pLength)
+//********************
+// Wrapper around the fwrite() function
+{
+   fwrite(pData, 1, pLength, File);
+
+   if(ferror(File)) {
+      error("Cannot write to file");
+   }
+}
 
 // =============================================================================
 // Memory image loading and saving functions
-
-// TODO: Write_HEX and Write_SREC can be smarter in how they write empty $FF
-// TODO: Return number of bytes read/written to it can be Log()ed
 
 void Write_BIN(const char *pName)
 //********************
@@ -679,6 +708,31 @@ void Write_BIN(const char *pName)
    // file into the "\r\n" line endings used by Windows.
    File file(pName, "wb");
    file.write(VAR(Memory), VAR(Pointer_mask) + 1);
+}
+
+void Read_BIN(const char *pName)
+//********************
+// Read full EEPROM memory contents from a raw binary file. A warning if shown
+// if the file is larger than the EEPROM memory size, and the additional data
+// at the end of the file is ignored. Files smaller than the EEPROM memory
+// simply initialize a smaller portion of memory
+{
+   // Open file for reading in binary mode. The "b" specifier is needed so the
+   // stdio library does not try to translate "\r\n" line edings used by
+   // Windows into the "\n" specified by the C standard. Also request that
+   // end-of-file should be returned by file.read() instead of throwing an
+   // exception.
+   File file(pName, "rb", true);
+
+   // Read up to the smaller size of available memory or file size
+   file.read(VAR(Memory), VAR(Pointer_mask) + 1);
+   
+   // Try readning one more byte to check if file is larger than memory. If
+   // read succeesds than issue a warning because additional data is ignored.
+   char dummy;
+   if(file.read(&dummy, 1)) {
+      File_Error(pName, MB_ICONWARNING, FILEERROR_TOOBIG);
+   }   
 }
 
 void Write_HEX(const char *pName)
@@ -1313,7 +1367,7 @@ void On_gadget_notify(GADGET pGadgetId, int pCode)
    pathBuffer[0] = '\0';                   // No initial filename in dialog
    dlg.lStructSize = sizeof(OPENFILENAME); // Structure size required
    dlg.hwndOwner = VMLAB_Window;           // Owner window of Open/Save dialog
-   dlg.lpstrFilter = OPENFILENAME_FILTER;  // Supporte file types
+   dlg.lpstrFilter = OPENFILENAME_FILTER;  // Supported file types
    dlg.lpstrFile = pathBuffer;             // Buffer to receive user's filename
    dlg.nMaxFile = MAX_PATH;                // Total size of lpstrFile buffer
    dlg.lpstrDefExt = "eep";                // Default filename extension
@@ -1342,10 +1396,10 @@ void On_gadget_notify(GADGET pGadgetId, int pCode)
             // initialized if only part of the input file was read.
             try {
                switch(dlg.nFilterIndex) {
-                  case FT_HEX:   Read_HEX(pathBuffer); break;
-                  case FT_SREC:  Read_SREC(pathBuffer); break;
-                  case FT_GEN:   Read_GEN(pathBuffer); break;
-                  //case FT_BIN: Read_BIN(pathBuffer); break;
+                  case FT_HEX:  Read_HEX(pathBuffer); break;
+                  case FT_SREC: Read_SREC(pathBuffer); break;
+                  case FT_GEN:  Read_GEN(pathBuffer); break;
+                  case FT_BIN:  Read_BIN(pathBuffer); break;
                }
                Log("EEPROM contents loaded from \"%s\"",
                   &pathBuffer[dlg.nFileOffset]);
