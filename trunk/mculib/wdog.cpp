@@ -192,11 +192,13 @@ void Count()
    VAR(Dirty_time) = true;
 
    // Schedule next timer tick to keep watchdog running. If watchdog becomes
-   // disabled, then On_register_write() will invalide the Tick_signature.
+   // disabled, then On_register_write() or On_reset() (the two places where
+   // WDTCSR can change and the watchdog can be stopped) will invalide the
+   // Tick_signature.
    Go();
 
    // If the prescaler divisor is valid (no unknown bits and not a reserved
-   // value), then compare it against the accumulated ticks and either shedule
+   // value), then compare it against the accumulated ticks and either schedule
    // an interrupt or do a system reset based on the current watchdog mode.
    if(VAR(Prescaler) && VAR(Count) % VAR(Prescaler) == 0) {
    
@@ -247,8 +249,9 @@ void On_simulation_begin()                //     "        "
 
    // The Tick_signature is always incremented by 2 and therefore it will
    // always be an odd number. This allows even values in pAux to specify
-   // alternate functions. Note that the Tick_signature is not invalidated
-   // after a reset because the watchdog timer runs independently.
+   // alternate functions. Note that the Tick_signature is not initialized
+   // inside On_reset() because the watchdog timer may continue running
+   // after a reset.
    VAR(Tick_signature) = 1;      
 
    // The count is not zeroed on a reset because watchdog keeps runnning
@@ -406,8 +409,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
 void On_reset(int pCause)
 //***********************
 // Initialize registers to the desired value. Note that the watchdog timer
-// is not automatically disabled here nor is the watchdog counter reset
-// since the watchdog is independent of the MCU and can continue a
+// is independent of the MCU and can continue across a reset.
 {   
 
    // The initial state of the WDE bit depends on the reset. If the MCU was
