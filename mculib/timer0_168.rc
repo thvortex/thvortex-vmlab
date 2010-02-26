@@ -73,7 +73,7 @@ FONT 8, "MS Sans Serif"
 // Info displayed under "Version" tab in Windows Explorer. Due to a serious bug
 // in the Borland RC compiler, all values must end with an explicit NULL.
 VS_VERSION VERSIONINFO
-FILEVERSION       0,3,0,0
+FILEVERSION       0,4,0,0
 PRODUCTVERSION    3,15,0,0
 FILEOS            VOS__WINDOWS32
 FILETYPE          VFT_DLL
@@ -84,7 +84,7 @@ FILETYPE          VFT_DLL
       {
          VALUE "CompanyName",      "Advanced MicroControllers Tools, Wojciech Stryjewski\0"
          VALUE "FileDescription",  "ATmega168 TIMER0 Peripheral\0"
-         VALUE "FileVersion",      "v0.3\0"
+         VALUE "FileVersion",      "v0.4\0"
          VALUE "InternalName",     "TIMER0\0"
          VALUE "LegalCopyright",   "2009-2010, GNU LGPL v2.1+\0"
          VALUE "OriginalFilename", "timer0_168.dll\0"
