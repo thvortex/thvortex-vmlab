@@ -34,6 +34,9 @@
 int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {return 1;} // is DLL
 // =============================================================================
 
+// Maximum value allowed in CLKPR register CLKPS field
+#define MAX_PRESCALER_INDEX 8
+
 DECLARE_PINS
    // No pins allowed in "dummy" peripheral. Leave it empty
 END_PINS
@@ -52,9 +55,11 @@ DECLARE_REGISTERS  // Always before DECLARE_VAR
    OSCCAL, GPIOR0, GPIOR1, GPIOR2, MCUCR, MCUSR
 END_REGISTERS
 
-DECLARE_VAR                      
-   // Only this instance; no need to declare variables here
+DECLARE_VAR
+   int Prescaler; // Current prescaler index (in case CLKPS bits have UNKNOWN value)
 END_VAR
+
+bool Started;          // True if simulation started and interface functions work
 
 // Action codes to be used with REMIND_ME2() -> On_remind_me(),
 enum {AUTOCLEAR_SELFPRGEN, AUTOCLEAR_CLKPCE, AUTOCLEAR_IVCE};
@@ -106,13 +111,34 @@ void On_destroy()                  //  Leave them like this, if no action requir
 {
 }
 
+void Change_clock(int pPrescaler)
+//***********************
+// Helper function to adjust the clock speed from the current prescaler index
+// stored in VAR(Prescaler) to the new prescaler index in "pPrescaler". This
+// function "undoes" the effects of the previous presclaer (by multiplying the
+// current clock by the prescaler value) and then applies the new prescaler
+// by dividing the clock by it.
+{
+   double clock = GET_CLOCK();
+   clock *= Clock_presc_table[VAR(Prescaler)];
+   clock /= Clock_presc_table[pPrescaler];
+
+   if(!SET_CLOCK(clock)) {
+      char strBuffer[128];
+      sprintf(strBuffer, "Requested clock speed out of range: %.1fMhz",
+         clock * 1.0e-6);
+      WARNING(strBuffer, CAT_CPU, WARN_MISC);
+   } else {
+      VAR(Prescaler) = pPrescaler;
+   }
+}
+
 void On_simulation_begin()
 //***********************
 // Handle fuse clock options. Could override the .CLOCK directive
 // This part of the code was previously handled at On_reset()
 {
    int resetDelay = 8; // 8 cycles, just an example. There could be an option
-   int clockDiv = 1;   // to use a realistic delay or just a fast one for simulation....
 
    double myClock = GET_CLOCK();  // The one coming in Project File .CLOCK directive
 
@@ -145,14 +171,24 @@ void On_simulation_begin()
          myClock = 128.0e3;
          break;
    }
-   if(GET_FUSE("CKDIV8") == 0) {   // See if CKDIV8 fuse is programmed and change clock
-      REG(CLKPR) = 3;
-      PRINT("Fuse CKDIV8 programmed. Clock divided by 8");
-      clockDiv = 8;
-   }
-   if(!SET_CLOCK(myClock / clockDiv, resetDelay))
-      WARNING("Clock / reset delay values out of range", CAT_CPU, WARN_MISC);
 
+   // Set clock (if overriden by internal oscillators) and reset delays. If
+   // clock out of range (i.e. it's not at least 32Khz and is more than the
+   // max value specified in the .ini file for the micro), then a warning
+   // message will be printed inside On_reset().
+   SET_CLOCK(myClock, resetDelay);
+   
+   // If fuse CKDIV8=0 (programmed) then On_reset() will divide the system
+   // clock by 8 and will assign the initial value to the CLKPR register.
+   if(GET_FUSE("CKDIV8") == 0) { 
+      PRINT("System clock divided by 8 (fuse CKDIV8=0)");
+   }
+   VAR(Prescaler) = 0;
+   
+   // TODO: Print the actual clock value used
+   
+   Started = true;
+   
    //TRACE(true);   // Uncomment for tracing
 }
 /* >>> Improvements: a frequency vs. VDD check could be performed to see if the
@@ -166,6 +202,8 @@ void On_simulation_end()
    FOREACH_REGISTER(j){
       REG(j) = WORD8(0,0); // Leave all bits unknown (X)
    }
+
+   Started = false;
 }
 
 WORD8 *On_register_read(REGISTER_ID pId)
@@ -239,26 +277,49 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
       //-----------------------------------------------------
       // R/W bits = CLKPCE and CLKPS3..0 (mask = 0x8F)
 
-          int prescValue = pData.get_field(3, 0);
-          if(prescValue == 0) {                     // Update CLKPCE only if prescValue is 0
-             if(pData[7] == 1) {                    // ...this is what the manual says...
-                REMIND_ME2(4, AUTOCLEAR_CLKPCE);    // Flag valid during 4 cycles
-             }
-          } else
-             pData.set_bit(7, REG(CLKPR)[7]);       // Trick to disable bit 7 update
-
-          if(REG(CLKPR)[7] == 1) {   // Check CLKPCE, bit 7
-             if (prescValue  > 8)
-                WARNING("CLKPR: selecting a reserved prescaling factor", CAT_CPU, WARN_MISC);
-             else {
-                // Changed to SET_CLOCK
-                //CHANGE_CLOCK(Clock_presc_table[prescValue], CLOCK_DIVIDE);
-                double newClock = GET_CLOCK();
-                if(!SET_CLOCK(newClock / Clock_presc_table[prescValue])) {
-                   WARNING("CLKPR: Clock value out of range for simulation", CAT_CPU, WARN_MISC);
-                }
-             }
-          }
+         int oldPrescaler = REG(CLKPR).get_field(3, 0);
+         int newPrescaler = pData.get_field(3, 0);
+         
+         // Can only set CLKPCE=1 if all CLKPS fields are zero. CLKPCE will be
+         // auto cleared after 4 cycles but only if it wasn't already set.
+         // TODO: Need a separate tick signature for each autoclear
+         if(pData[7] == 1) {
+            if(newPrescaler == 0) {
+               if(REG(CLKPR)[7] != 1) {
+                  REMIND_ME2(4, AUTOCLEAR_CLKPCE);
+               }
+            } else {
+               WARNING("CLKPR: Must write CLKPSx=0 if writing CLKPCE=1",
+                  CAT_CPU, WARN_MISC);
+               pData = REG(CLKPR);  // Trick to disable any register update
+            }
+         }
+         
+         // Clock prescaler can be changed only if writing CLKPCE=0 and CLKPCE
+         // was previously set in the register.
+         else if(newPrescaler != oldPrescaler) {
+            if(REG(CLKPR)[7] != 1) {
+               WARNING("CLKPR: Cannot change CLKPSx if CLKPCE not already set",
+                  CAT_CPU, WARN_MISC);
+            } else if(pData[7] != 0) {
+               WARNING("CLKPR: Must write CLKPCE=0 if changing CLKPSx",
+                  CAT_CPU, WARN_MISC);
+            } else {
+               if(newPrescaler > MAX_PRESCALER_INDEX) {
+                  WARNING("CLKPR: Selecting a reserved prescaling factor",
+                     CAT_CPU, WARN_PARAM_RESERVED);
+               }
+               if(newPrescaler >= 0 && newPrescaler <= MAX_PRESCALER_INDEX) {
+                  Change_clock(newPrescaler);
+               }
+               break; // Allow register assignment
+            }
+         }
+         
+         // Fall thru case: allow only writing CLKPS=X or CLKPS=0
+         REG(CLKPR).set_bit(7, pData[7]);
+         pData = REG(CLKPR);
+         
       end_register
 
       case_register(PRR, 0xEF) // Power Reduction Register
@@ -351,9 +412,15 @@ void On_remind_me(double pTime, int pAux)
       case AUTOCLEAR_SELFPRGEN:
          REG(SPMCSR).set_bit(0, 0);  // Clear bit 0: SELFPRGEN
          break;
+         
       case AUTOCLEAR_CLKPCE:
+         if(REG(CLKPR)[7] != 0) {
+            WARNING("CLKPR: CLKPCE cleared by hardware; previously set 4 cycles ago",
+               CAT_CPU, WARN_MISC);
+         }      
          REG(CLKPR).set_bit(7, 0);   // Clear bit 7: CLKPCE
          break;
+         
       case AUTOCLEAR_IVCE:
          REG(MCUCR).set_bit(0, 0);   // Clear bit 0: IVCE
          break;
@@ -465,9 +532,18 @@ void On_reset(int pCause)
    }
    REG(OSCCAL) = 0x3A;  // Load an arbitrary calibration value. This can be improved !!!
    
-   // TODO: Load initial prescaler value if CLKDIV8 is set
+   // If fuse CKDIV8=0 then set initial prescaler factor to 8 (at index 3)
+   // and call SET_CLOCK() to adjust the clock speed accordingly
+   if(GET_FUSE("CKDIV8") == 0) {
+      REG(CLKPR) = 3;
+      Change_clock(3);
+   } else {
+      Change_clock(0);
+   }
    
    // TODO: Check for low-level INT and FLAG_LOCK
+   // Since both INT0 and INT1 are level triggered afet reset, if either pin
+   // is low then immediately schedule an interrupt.   
 }
  
 
@@ -476,6 +552,10 @@ void On_port_edge(const char *pPortName, int pBit, EDGE pEdge, double pTime)
 // Handle external interrupts. Parameter pPortName contains the involved port
 // name "PA", "PB", etc, as defined in .INI file. pBit is the bit nr, 0 - 7
 {
+   char buf[128];
+   sprintf(buf, "%s%d = %d", pPortName, pBit, pEdge);
+   PRINT(buf);
+
    switch (pPortName[1]) { // See the 2nd letter, A, B, C, etc
       case 'B':
       //-------                             // Port "PB": PCINT0 to PCINT7
@@ -517,7 +597,7 @@ void On_port_edge(const char *pPortName, int pBit, EDGE pEdge, double pTime)
                   break;
             }
 
-         } else if(pBit == 3) {                   // INT1 handling, shared by PD2
+         } else if(pBit == 3) {                   // INT1 handling, shared by PD3
             switch(REG(EICRA).get_field(3, 2)) {  // Check edge: bits 3 - 2, ISC11, ISC10 
                case 0:  // Low level
                   if(pEdge == FALL) {
@@ -554,12 +634,14 @@ void On_gadget_notify(GADGET pGadget, int pCode)
 // for adding some debug goodies, which can be tuned to the
 // micro being modelled, in this case to force different types of reset
 {
-   if(pCode == BN_CLICKED) { // Response to button click 
-      switch(pGadget) {
-         case GADGET13: RESET(RESET_EXTERNAL); break;
-         case GADGET14: RESET(RESET_BROWNOUT); break;
-         case GADGET15: RESET(RESET_WATCHDOG); break;
-         // The POWER ON code is given at simulation start
+   if(Started) { // Cannot call RESET() until simulation has started 
+      if(pCode == BN_CLICKED) { // Response to button click 
+         switch(pGadget) {
+            case GADGET13: RESET(RESET_EXTERNAL); break;
+            case GADGET14: RESET(RESET_BROWNOUT); break;
+            case GADGET15: RESET(RESET_WATCHDOG); break;
+            // The POWER ON code is given at simulation start
+         }
       }
    }
 }
