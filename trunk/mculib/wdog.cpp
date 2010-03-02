@@ -92,6 +92,7 @@ DECLARE_VAR
    UINT Count;            // Current prescaler counter value
    int Prescaler;         // Prescaler divisor selected by WDP bits
    int Tick_signature;    // For REMIND_ME, to validate ticks
+   // TODO: Need a separate signature for the autoclear
    
    bool Log;              // True if the "Log" checkbox button is checked
    bool Dirty;            // True if "Mode" and "Clock" fields need update
@@ -255,7 +256,7 @@ void On_simulation_begin()                //     "        "
    VAR(Tick_signature) = 1;      
 
    // The count is not zeroed on a reset because watchdog keeps runnning
-   VAR(Count) = 0;   
+   VAR(Count) = 0;
 }
 
 void On_simulation_end()
@@ -302,7 +303,8 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
                Log("Update prescaler: %s", Prescaler_text[newWdp + 1]);
 
                if(newWdp > MAX_PRESCALER_INDEX) {
-                  Warn("Reserved WDP value written to WDTCSR");
+                  WARNING("Reserved WDP value written to WDTCSR",
+                     CAT_WATCHDOG, WARN_PARAM_RESERVED);
                }
                
                // Decode WDP field to prescaler divisor
@@ -411,7 +413,6 @@ void On_reset(int pCause)
 // Initialize registers to the desired value. Note that the watchdog timer
 // is independent of the MCU and can continue across a reset.
 {   
-
    // The initial state of the WDE bit depends on the reset. If the MCU was
    // reset due to a previous watchdog timeout, then the WDE pin is set to 1
    // and becomes read-only until the WDRF flag is cleared in MCUSR.
