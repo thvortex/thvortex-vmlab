@@ -41,10 +41,20 @@ int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {return 1;} // is DLL
 // Period of one watchdog timer tick of 128kHz clock
 #define WDOG_PERIOD (1.0 / 128000)
 
-// Watchdog mode as a combination of ACISx bits
-const char *Mode_text[] = {
-   "?", "Disabled", "Rising Edge", "Falling Edge", "Toggle"
+// Watchdog mode as a combination of ACISx bits overriden by ACD
+enum { 
+   MODE_UNKNOWN = -1, MODE_TOGGLE, MODE_RESERVED, MODE_FALL,
+   MODE_RISE, MODE_DISABLED, 
 };
+const char *Mode_text[] = {
+   "?", "Toggle", "Reserved", "Falling Edge", "Rising Edge", "Disabled"
+};
+
+// Labels for positive voltage input based on ACBG bit value
+enum {
+   POS_AIN0, POS_VREF, POS_UNKNOWN
+};
+const char *Positive_text[] = { "AIN0", "VREF", "?" };
 
 // Involved ports. Keep same order as in .INI file "Port_map = ..." who
 // does the actual assignment to micro ports PD0, etc. This allows multiple instances
@@ -80,6 +90,8 @@ END_INTERRUPTS
 // Declare variables here to allow multiple instances to be placed
 //
 DECLARE_VAR
+   int Mode;              // Current mode (ACD & ACISx bits)
+
    double Positive;       // Last voltage seen on AIN0 or positive input
    double Negative;       // Last voltage seen on AIN1 or negative input
 
@@ -163,12 +175,24 @@ void On_simulation_begin()                //     "        "
 // happens inside On_reset() since that will always get called immediately
 // after On_simulation_begin().
 {
+   // Set a sane default value until first On_time_step() call
+   VAR(Positive) = 0;
+   VAR(Negative) = 0;
 }
 
 void On_simulation_end()
 //**********************
 // If the simulation is ending, set all registers and text fieds to unknown.
 {
+   // Set voltage displays to "? V" and ensure they are left as such
+   SetWindowText(GET_HANDLE(GDT_VPLUS), "? V");
+   SetWindowText(GET_HANDLE(GDT_VMINUS), "? V");
+   VAR(Dirty_voltage) = false;
+
+   // Set reigster to unknown and ensure that mode/labels update accordingly
+   REG(ACSR) = WORD8(0, 0);
+   VAR(Mode) = MODE_UNKNOWN;   
+   VAR(Dirty) = true;
 }
 
 void On_register_write(REGISTER_ID pId, WORD8 pData)
@@ -177,13 +201,39 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
 // allows to perform all the derived operations.
 // Register selection macros include the "case", X bits check and logging
 {
+   int newMode;
+
    switch(pId) {
       case ACSR:
-         Log_register_write(ACSR, pData, 0xdf); // All r/w except ACO (bit 5)
+         Log_register_write(ACSR, pData, 0xff); // All r/w except ACO (bit 5)
 
+         // Bits 0,1 - ACISx: Analog Comparator Interrupt Mode Select
+         // ----------------------------------------
+         int newMode = pData.get_field(1, 0);
+         if(newMode == MODE_RESERVED) {
+            WARNING("Reserved ACIS value written to ACSR",
+               CAT_COMP, WARN_PARAM_RESERVED);
+         }
+         
+         // Bit 2 - ACIC: Analog Comparator Input Capture Enable
+         // ----------------------------------------
+         // Writing ACIC=0/X will disable comparator input capture. Sending
+         // the current comparator state when enabling allows simulating
+         // of the spurious interrupt that can occur on real hardware
+         if(pData[2] == 1 && REG(ACSR)[2] != 1) {
+            if(VAR(Positive) > VAR(Negative)) {
+               NOTIFY("TIMER1", NTF_ACIC_1);
+            } else {
+               NOTIFY("TIMER1", NTF_ACIC_0);
+            }
+         } else if(pData[2] != 1 && REG(ACSR)[2] == 1) {
+            NOTIFY("TIMER1", NTF_ACIC_OFF);
+         }
+         
          // Bit 3 - ACIE: Analog Comparator Interrupt Enable
          // ----------------------------------------
-         // TODO: Implement this with some NOTIFY() code
+         // Writing ACIE=0/X will disable the interrupt
+         SET_INTERRUPT_ENABLE(ADCC, pData[3] == 1);
                   
          // Bit 4 - ACI: Analog Comparator Interrupt Flag
          // ----------------------------------------
@@ -194,36 +244,59 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
          }
          
          // Bit 5 - ACO: Analog Comparator Output
+         // ----------------------------------------
+         // Read-only bit is masked
+
          // Bit 6 - ACBG: Analog Comparator Bandgap Select
          // ----------------------------------------
-         // Nothing special to do here
+         // If bandgap reference was updated, then Log() and update GUI label
+         if(pData[6] != REG(ACSR)[6]) {
+            Log("Changing positive input: %s", Positive_text[pData[6]]);
+            VAR(Dirty) = true;
+         }
 
          // Bit 7 - ACD: Analog Comparator Disable
          // ----------------------------------------
          // Should write ACIE=0 to avoid spurious interrupts when changing ACD
+         // ACD=1 or ACD=X also overrides operating mode set by ACIS bits
          if(pData[7] != REG(ACSR)[7] && pData[3] != 0) {
             WARNING("Should write ACIE=0 when changing ACD (avoid spurious interrupt)",
                CAT_COMP, WARN_MISC);
          }
+         if(pData[7] == 1) {
+            newMode = MODE_DISABLED;
+         } else if(pData[7] == UNKNOWN) {
+            newMode = MODE_UNKNOWN;
+         }
+                  
+         // If operating mode changed then log it and redraw the GUI
+         if(newMode != VAR(Mode)) {
+            Log("Updating mode: %s", Mode_text[newMode + 1]);
+            VAR(Mode) = newMode;
+            VAR(Dirty) = true;
+         }
 
-         // TODO: Log mode changes
-         // TODO: Log bandgap changes
-         
-         REG(ACSR) = pData;
+         // All bits r/w except for ACO (read only) and ACI (only clear)
+         REG(ACSR) = pData & 0xcf;
          break;
    }
 }   
 
+// TODO: Need SLEEP mode handling
+
 void On_reset(int pCause)
 //***********************
 // Initialize registers to the desired value.
-{   
-}
-
-void On_remind_me(double pTime, int pAux)
-//***************************************
-// Response to REMIND_ME()
 {
+   REG(ACSR) = 0;
+   VAR(Mode) = 0;   
+   VAR(Dirty) = true;
+   
+   // Call On_time_step() to measure the voltages again and schedule an
+   // interrupt if they changed. It's possible that a reset will immediately
+   // trigger an interrupt because the voltage sources for the positive
+   // and negative inputs are changed back to AIN0 and AIN1 on reset.
+   // TODO: On_time_step()
 }
 
 void On_notify(int pWhat)
@@ -244,19 +317,18 @@ void On_gadget_notify(GADGET pGadget, int pCode)
 void On_update_tick(double pTime)
 //*******************************
 // Called periodically to refresh static controls showing the status, etc.
-// If the watchdog timer is enabled, the "Timeout" field is updated to show
-// remaining time based on the current "pTime". The rest of the GUI is only
-// updated if the WDTCSR register has changed since the last On_update_tick().
+// Only the mode display, the voltage field labels, and the voltage fields
+// themselves, but only if any changes occurred since the last update.
 {
 }
 
 void On_interrupt_start(INTERRUPT_ID pId)
 //***********************************
-// Called when MCU begins to execute the ADCC interrupt.
+// Called when MCU begins to execute the ADCC interrupt. Clear ACI flag.
 {
    switch(pId) {
       case ADCC:
-         
+         REG(ACSR).set_bit(4, 0);
          break;
    }
 }
