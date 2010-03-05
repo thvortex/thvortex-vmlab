@@ -35,13 +35,7 @@
 int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {return 1;} // is DLL
 // =============================================================================
 
-// Maximum value allowed in WDP field
-#define MAX_PRESCALER_INDEX 9
-
-// Period of one watchdog timer tick of 128kHz clock
-#define WDOG_PERIOD (1.0 / 128000)
-
-// Watchdog mode as a combination of ACISx bits overriden by ACD
+// Comparator mode as a combination of ACISx bits overriden by ACD
 enum { 
    MODE_UNKNOWN = -1, MODE_TOGGLE, MODE_RESERVED, MODE_FALL,
    MODE_RISE, MODE_DISABLED, 
