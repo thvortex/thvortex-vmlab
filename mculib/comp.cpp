@@ -1,5 +1,5 @@
 // =============================================================================
-// Component Name: AVR watchdog timer peripheral
+// Component Name: AVR analog comparator peripheral
 //
 // Copyright (C) 2010 Wojciech Stryjewski <thvortex@gmail.com>
 //
@@ -76,9 +76,6 @@ END_REGISTERS
 DECLARE_INTERRUPTS
    ADCC
 END_INTERRUPTS 
-
-// Wrapper macro to call WARNING() since watchdog has only one category
-#define Warn(text) WARNING(text, CAT_WATCHDOG, WARN_WATCHDOG_SUSPICIOUS_USE)
 
 // =============================================================================
 // Declare variables here to allow multiple instances to be placed
