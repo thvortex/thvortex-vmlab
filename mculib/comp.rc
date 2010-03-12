@@ -54,7 +54,7 @@ FONT 8, "MS Sans Serif"
    CONTROL "%", GDT_ACSR + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 13, 28, 8
    CONTROL "",  GDT_ACSR, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 12, 42, 10
 
-   CONTROL "V(AIN0)", GDT_LPLUS, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 13, 30, 8
+   CONTROL "V(???)", GDT_LPLUS, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 13, 30, 8
    CONTROL "? V", GDT_VPLUS, "static", SS_CENTER | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 111, 12, 53, 10
    CONTROL "V(AIN1)", GDT_LMINUS, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 25, 30, 8
    CONTROL "? V", GDT_VMINUS, "static", SS_CENTER | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 111, 24, 53, 10
@@ -80,7 +80,7 @@ FILETYPE          VFT_DLL
          VALUE "CompanyName",      "Wojciech Stryjewski\0"
          VALUE "FileDescription",  "AVR Analog Comparator\0"
          VALUE "FileVersion",      "v0.4\0"
-         VALUE "InternalName",     "WDOG\0"
+         VALUE "InternalName",     "COMP\0"
          VALUE "LegalCopyright",   "2010, GNU LGPL v2.1+\0"
          VALUE "OriginalFilename", "comp.dll\0"
          VALUE "ProductName",      "VMLAB\0"
