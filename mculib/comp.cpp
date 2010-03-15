@@ -84,6 +84,7 @@ END_INTERRUPTS
 //
 DECLARE_VAR
    int Mode;              // Current mode (ACD & ACISx bits)
+   int Sleep;             // Last SLEEP_xxx constant passed to On_sleep()
 
    double Positive;       // Last voltage seen on AIN0 or positive input
    double Negative;       // Last voltage seen on AIN1 or negative input
@@ -160,6 +161,42 @@ void Interrupt()
    REG(ACSR).set_bit(4, 1);
 }
 
+bool Is_disabled()
+//*************************
+// Return TRUE if comparator is disabled either because ACD=1 in ACSR register
+// or because the AVR is in a deeper sleep mode than SLEEP_IDLE
+{
+   return (REG(ACSR)[7] == 1 || VAR(Sleep) > SLEEP_IDLE) ? true : false;
+}
+
+void Measure()
+//*************************
+// Sample the voltage levels at the positive and negative comparator inputs
+// and record them into VAR(Positive) and VAR(Negative). Called from
+// On_time_step() to detect a rising/falling edge on the comparator output
+// and from On_reset() to assign an initial value to the ACO bit in ACSR.
+{
+   // Measure the positive input voltage from either AIN0 or VREF as
+   // determined by the ACBG pin in ACSR. If ACBG is UNKNOWN then
+   // the measured voltage doesn't change.
+   if(REG(ACSR)[6] == 0) {
+      VAR(Positive) = GET_VOLTAGE(AIN0);
+   } else if(REG(ACSR)[6] == 1) {
+      VAR(Positive) = VREF_VOLTAGE;
+   }
+   
+   // Measure the negative input voltage from either AIN1 or from one
+   // of the ADCx pins based on the ACME/ADEN bits in ADCSRB/ADCSRBA
+   // and the ADMUX register. ADC will NOTIFY() to inform comparator
+   // of changes to the negative input source.
+   // TODO: Finish this once ADC component is written
+   VAR(Negative) = GET_VOLTAGE(AIN1);
+}
+
+// TODO: If comparator re-enabled due to SLEEP or ACD then send NOTIFY() with
+// current ACO output (i.e. maybe not necessary since next On_time_step()
+// will take care of it).
+
 // =============================================================================
 // Callback functions. These functions are called by VMLAB at the proper time
 
@@ -173,15 +210,9 @@ void On_destroy()                         //     "        "
 
 void On_simulation_begin()                //     "        "
 //**********************
-// Called at the beginning of simulation. The rest of initialization
-// happens inside On_reset() since that will always get called immediately
-// after On_simulation_begin().
-{
-   // Set a sane default value until first On_time_step() call. The Started
-   // variable is not set until the first On_time_step() so that the voltage
-   // display does not update until the first
-   //VAR(Positive) = 0;
-   //VAR(Negative) = 0;
+// Called at the beginning of simulation. All initialization happens inside
+// On_reset() which is always called immediately after On_simulation_begin().
+{   
 }
 
 void On_simulation_end()
@@ -260,7 +291,8 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
             newMode = MODE_DISABLED;
             pData.set_bit(5, UNKNOWN);
          }
-         // TODO: Use Is_disabled(); separate Log() message
+         // TODO: Use Is_disabled(); separate Log() message if not already
+         // disabled by SLEEP but only set ACO=X if disabled due to ACD=1
                   
          // If operating mode changed then log it and redraw the GUI
          if(newMode != VAR(Mode)) {
@@ -272,22 +304,24 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
          // ----------------------------------------
          // Writing ACIC=0/X will disable comparator input capture. Sending
          // the current comparator state when enabling allows simulating
-         // of the spurious interrupt that can occur on real hardware
+         // of the spurious interrupt that can occur on real hardware.
          //
          // NOTE: The NOTIFY() must be the last interface function called due to
          // a bug IN VMLAB 3.15. This bug is fixed in 3.15E and later but for now
          // this allows me to release the component before a new VMLAB 3.16 is
          // ready.
+         //
+         // TODO: Send update using ACO bit but not if ACO=X
          if(pData[2] == 1 && REG(ACSR)[2] != 1) {
             bool state = VAR(Positive) > VAR(Negative);
-            Log("Analog comparator input capture: enabled");
+            Log("Updating input capture: enabled");
             NOTIFY("TIMER1", state ? NTF_ACIC_1 : NTF_ACIC_0);
          } else if(pData[2] != 1 && REG(ACSR)[2] == 1) {
-            Log("Analog comparator input capture: disabled");
+            Log("Updating input capture: disabled");
             NOTIFY("TIMER1", NTF_ACIC_OFF);
          }
                   
-         // All bits r/w except for ACO (read only) and ACI (only clear)
+         // All bits r/w except for ACO (read only) and ACI (clear only)
          REG(ACSR) = pData;
          VAR(Dirty) = true;
          break;
@@ -303,40 +337,27 @@ void On_time_step(double pTime)
 // interrupt if ACIE=1, and sent input capture notifications to TIMER1
 // if ACIC=1
 {
-   bool oldOutput = VAR(Positive) > VAR(Negative);
+   // Sample new voltage at positive and negative inputs to comparator
+   Measure();
 
-   // Measure the positive input voltage from either AIN0 or VREF as
-   // determined by the ACBG pin in ACSR. If ACBG is UNKNOWN then
-   // the measured voltage doesn't change.
-   if(REG(ACSR)[6] == 0) {
-      VAR(Positive) = GET_VOLTAGE(AIN0);
-   } else if(REG(ACSR)[6] == 1) {
-      VAR(Positive) = VREF_VOLTAGE;
-   }
-   
-   // Measure the negative input voltage from either AIN1 or from one
-   // of the ADCx pins based on the ACME/ADEN bits in ADCSRB/ADCSRBA
-   // and the ADMUX register. ADC will NOTIFY() to inform comparator
-   // of changes to the negative input source.
-   // TODO: Finish this once ADC component is written
-   VAR(Negative) = GET_VOLTAGE(AIN1);
-
-   // If comparator is disabled then don't update ACO bit or interrupt
-   if(VAR(Mode) == MODE_DISABLED) {
+   // If comparator is disabled then don't update ACO bit or interrupt.
+   if(Is_disabled()) {
       return;
    }
 
    // Always update ACO bit with comparator output. If comparator was
-   // previously disabled and ACO=X, it will not get updated to the
+   // previously disabled and ACO=X, it will now get updated to the
    // current output of the comparator.
-   bool newOutput = VAR(Positive) > VAR(Negative);
+   LOGIC oldOutput = REG(ACSR)[5];
+   LOGIC newOutput = VAR(Positive) > VAR(Negative);
    REG(ACSR).set_bit(5, newOutput);
       
    // Check if the logic output of comparator has changed on this time step.
    // Generate interrupt if ACIE=1. If ACIE=0 then no interrupt is generated
    // but the ACI interrupt flag will still be set and the interrupt will
-   // remain pending.
-   if(newOutput != oldOutput) {
+   // remain pending. If previously ACO=X (for example, it was disabled via
+   // ACD=1) then no interrupt in generated and no flag is set.
+   if(newOutput != oldOutput && oldOutput != UNKNOWN) {
       switch(VAR(Mode)) {
          case MODE_RISE:
             if(newOutput) {
@@ -367,38 +388,58 @@ void On_time_step(double pTime)
          NOTIFY("TIMER1", newOutput ? NTF_ACIC_1 : NTF_ACIC_0);
       }   
    }
-   
-   // If this is the first On_time_step(), ensure that On_update_tick() will
-   // begin displaying the measured voltage in the GUI window.
-   Started = true;
 }
 
 void On_reset(int pCause)
 //***********************
 // Initialize registers to the desired value.
 {
-   REG(ACSR) = 0;
    VAR(Mode) = 0;   
+   VAR(Sleep) = SLEEP_DONE;
    VAR(Dirty) = true;
-   
-   // Call On_time_step() to measure the voltages again and schedule an
-   // interrupt if they changed. It's possible that a reset will immediately
-   // trigger an interrupt because the voltage sources for the positive
-   // and negative inputs are changed back to AIN0 and AIN1 on reset.
-   On_time_step(0); // pTime not used
-   
-   // TODO: It seems that the interrupt flags set with SET_INTERRUPT_FLAG()
-   // are automatically cleared on reset, but the mask bits which are set
-   // with SET_INTERRUPT_ENABLE() are NOT cleared on reset.
-   // TODO: It also seems that calling SET_INTERRUPT_ENABLE(ACI, xxx)
-   // or SET_INTERRUPT_FLAG(ACI, xxx) from On_reset() has no effect on the
-   // simulator.
+
+   // According to the datasheet, ACI=0 after a reset therefore the initial
+   // ACO value must be set here so that the next call to On_time_step() will
+   // never see a change in the ACO value. Without this line, it's possible
+   // an edge would be detected because the positive comparator input is
+   // forced to AIN0 (ACBG=0 after reset).
+   Measure();
+   REG(ACSR).set_bit(5, VAR(Positive) > VAR(Negative));
+  
+   // If this is the first On_reset(), ensure that On_update_tick() will
+   // begin displaying the measured voltage in the GUI window.
+   Started = true;
 }
 
 void On_notify(int pWhat)
 //***********************
-// Notification coming from some other DLL instance. 
+// Notification coming from some other DLL instance. The ADC will send
+// notifications when the ADC multiplexer is used for selecting the
+// negative input of the comparator
 {
+   // TODO
+}
+
+void On_sleep(int pMode)
+//*********************
+// The micro has entered in SLEEP mode.
+{
+   int wasDisabled = Is_disabled();
+   VAR(Sleep) = pMode;
+   if(wasDisabled != Is_disabled()) {
+
+      // Call On_time_step() when waking up from SLEEP mode because the input
+      // voltages may have changed while in SLEEP, and therefore the ACO bit
+      // may need to be updated and an interrupt may need to be scheduled.
+      if(Is_disabled()) {
+         Log("Disabled by SLEEP");
+      } else {
+         Log("Exit from SLEEP");
+         On_time_step(0); // pTime is not used
+      }
+   
+      VAR(Dirty) = true;
+   }
 }
 
 void On_gadget_notify(GADGET pGadget, int pCode)
@@ -420,7 +461,7 @@ void On_update_tick(double pTime)
    // the sources changed (for example, if updating ACSR through the GUI
    // while the simulation is paused) and update the voltage display.
    if(Started) {
-      On_time_step(0);
+      Measure();
       SetWindowTextf(GET_HANDLE(GDT_VPLUS), "%.3f V", VAR(Positive));
       SetWindowTextf(GET_HANDLE(GDT_VMINUS), "%.3f V", VAR(Negative));
    }
@@ -437,7 +478,7 @@ void On_update_tick(double pTime)
    if(VAR(Dirty)) {
       SetWindowTextf(GET_HANDLE(GDT_LPLUS), "V(%s)", Plus_text[REG(ACSR)[6]]);
       SetWindowTextf(GET_HANDLE(GDT_MODE), "%s%s", Mode_text[VAR(Mode) + 1],
-         REG(ACSR)[2] == 1 && VAR(Mode) != MODE_DISABLED ? " / Input Capture" : "");
+         REG(ACSR)[2] == 1 && !Is_disabled() ? " / Input Capture" : "");
    }
 }
 
