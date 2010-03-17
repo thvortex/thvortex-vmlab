@@ -40,16 +40,13 @@ int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {return 1;} // is DLL
 
 // Comparator mode as a combination of ACISx bits overriden by ACD.
 // NOTE: get_field() returns -1 for unknown bits
-enum { 
-   MODE_UNKNOWN = -1, MODE_TOGGLE, MODE_RESERVED, MODE_FALL,
-   MODE_RISE, MODE_DISABLED, 
-};
+enum { MODE_UNKNOWN = -1, MODE_TOGGLE, MODE_RESERVED, MODE_FALL, MODE_RISE };
 const char *Mode_text[] = {
-   "?", "Toggle", "Reserved", "Falling Edge", "Rising Edge", "Disabled"
+   "?", "Toggle", "Reserved", "Falling Edge", "Rising Edge",
 };
 
 // Labels for positive voltage input based on ACBG bit value 
-// NOTE: operator[] returns UNKNOWN (=2) if ACBG=X
+// NOTE: operator[] returns UNKNOWN (2) if ACBG=X
 const char *Plus_text[] = { "AIN0", "VREF", "???" };
 
 // Involved ports. Keep same order as in .INI file "Port_map = ..." who
@@ -83,7 +80,6 @@ END_INTERRUPTS
 // Declare variables here to allow multiple instances to be placed
 //
 DECLARE_VAR
-   int Mode;              // Current mode (ACD & ACISx bits)
    int Sleep;             // Last SLEEP_xxx constant passed to On_sleep()
 
    double Positive;       // Last voltage seen on AIN0 or positive input
@@ -221,7 +217,6 @@ void On_simulation_end()
 {
    // Set reigster to unknown and ensure that mode/labels update accordingly
    REG(ACSR) = WORD8(0, 0);
-   VAR(Mode) = MODE_UNKNOWN;   
    VAR(Dirty) = true;
    
    // Force On_update_tick() to display "? V" for the voltage values
@@ -266,7 +261,6 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
          // Bit 5 - ACO: Analog Comparator Output
          // ----------------------------------------
          // Copy read only ACO bit from ACSR to pData to preserve value
-         // TODO: What happens to ACO when ACD=1?
          pData.set_bit(5, REG(ACSR)[5]);
  
          // Bit 6 - ACBG: Analog Comparator Bandgap Select
@@ -285,37 +279,27 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
                CAT_COMP, WARN_MISC);
          }
          
-         // The ACD bit overrides the ACIS mode selection
-         // If the comparator is disabled, then set ACO=X
-         if(pData[7] == 1) {
-            newMode = MODE_DISABLED;
-            pData.set_bit(5, UNKNOWN);
-         }
          // TODO: Use Is_disabled(); separate Log() message if not already
-         // disabled by SLEEP but only set ACO=X if disabled due to ACD=1
+         // disabled by SLEEP but only set ACO=0 if disabled due to ACD=1
                   
          // If operating mode changed then log it and redraw the GUI
-         if(newMode != VAR(Mode)) {
+         if(newMode != REG(ACSR).get_field(1, 0)) {
             Log("Updating mode: %s", Mode_text[newMode + 1]);
-            VAR(Mode) = newMode;
          }
 
          // Bit 2 - ACIC: Analog Comparator Input Capture Enable
          // ----------------------------------------
          // Writing ACIC=0/X will disable comparator input capture. Sending
-         // the current comparator state when enabling allows simulating
-         // of the spurious interrupt that can occur on real hardware.
+         // the current ACO bit when enabling allows simulating of the
+         // spurious interrupt that can occur on real hardware.
          //
          // NOTE: The NOTIFY() must be the last interface function called due to
          // a bug IN VMLAB 3.15. This bug is fixed in 3.15E and later but for now
          // this allows me to release the component before a new VMLAB 3.16 is
          // ready.
-         //
-         // TODO: Send update using ACO bit but not if ACO=X
          if(pData[2] == 1 && REG(ACSR)[2] != 1) {
-            bool state = VAR(Positive) > VAR(Negative);
             Log("Updating input capture: enabled");
-            NOTIFY("TIMER1", state ? NTF_ACIC_1 : NTF_ACIC_0);
+            NOTIFY("TIMER1", REG(ACSR)[5] ? NTF_ACIC_1 : NTF_ACIC_0);
          } else if(pData[2] != 1 && REG(ACSR)[2] == 1) {
             Log("Updating input capture: disabled");
             NOTIFY("TIMER1", NTF_ACIC_OFF);
@@ -340,25 +324,23 @@ void On_time_step(double pTime)
    // Sample new voltage at positive and negative inputs to comparator
    Measure();
 
-   // If comparator is disabled then don't update ACO bit or interrupt.
-   if(Is_disabled()) {
-      return;
-   }
+   // TODO: If disabled due to SLEEP, then don't update ACO or interrupt
 
-   // Always update ACO bit with comparator output. If comparator was
-   // previously disabled and ACO=X, it will now get updated to the
-   // current output of the comparator.
+   // Update ACO bit with comparator output. If comparator is currently
+   // disabled with ACD=1, then force ACO=0 which could possibly generate
+   // an interrupt. This ACO behavior with ACD=1 was verified on real
+   // ATmega48 hardware.
    LOGIC oldOutput = REG(ACSR)[5];
-   LOGIC newOutput = VAR(Positive) > VAR(Negative);
+   LOGIC newOutput = REG(ACSR)[7] == 1 ? 0 : VAR(Positive) > VAR(Negative);
    REG(ACSR).set_bit(5, newOutput);
       
    // Check if the logic output of comparator has changed on this time step.
    // Generate interrupt if ACIE=1. If ACIE=0 then no interrupt is generated
    // but the ACI interrupt flag will still be set and the interrupt will
-   // remain pending. If previously ACO=X (for example, it was disabled via
-   // ACD=1) then no interrupt in generated and no flag is set.
-   if(newOutput != oldOutput && oldOutput != UNKNOWN) {
-      switch(VAR(Mode)) {
+   // remain pending. The ACIS mode bits determine the edge condition that
+   // causes an interrupt to occur.
+   if(newOutput != oldOutput) {
+      switch(REG(ACSR).get_field(1, 0)) {
          case MODE_RISE:
             if(newOutput) {
                Interrupt();
@@ -375,7 +357,7 @@ void On_time_step(double pTime)
             Interrupt();
             break;
             
-         default: // MODE_RESERVED or MODE_UNKNOWN
+         default: // MODE_UNKNOWN
             break;
       }
 
@@ -394,20 +376,18 @@ void On_reset(int pCause)
 //***********************
 // Initialize registers to the desired value.
 {
-   VAR(Mode) = 0;   
    VAR(Sleep) = SLEEP_DONE;
    VAR(Dirty) = true;
-
-   // According to the datasheet, ACI=0 after a reset therefore the initial
-   // ACO value must be set here so that the next call to On_time_step() will
-   // never see a change in the ACO value. Without this line, it's possible
-   // an edge would be detected because the positive comparator input is
-   // forced to AIN0 (ACBG=0 after reset).
-   Measure();
-   REG(ACSR).set_bit(5, VAR(Positive) > VAR(Negative));
+   
+   // The ACSR register (including the ACO bit) is initialized to zero on
+   // reset. If the output comparator is 1, then the ACO bit will be set
+   // inside the next On_time_step() and an interrupt will be generated
+   // immediately after the reset. Verified on real ATmega48 hardware.
+   REG(ACSR) = 0;
   
-   // If this is the first On_reset(), ensure that On_update_tick() will
+   // In case this is the first On_reset(), ensure that On_update_tick() will
    // begin displaying the measured voltage in the GUI window.
+   Measure();
    Started = true;
 }
 
@@ -477,8 +457,14 @@ void On_update_tick(double pTime)
    // to the Mode display.
    if(VAR(Dirty)) {
       SetWindowTextf(GET_HANDLE(GDT_LPLUS), "V(%s)", Plus_text[REG(ACSR)[6]]);
-      SetWindowTextf(GET_HANDLE(GDT_MODE), "%s%s", Mode_text[VAR(Mode) + 1],
-         REG(ACSR)[2] == 1 && !Is_disabled() ? " / Input Capture" : "");
+      
+      if(Is_disabled()) {
+         SetWindowText(GET_HANDLE(GDT_MODE), "Disabled");
+      } else {
+         int mode = REG(ACSR).get_field(1, 0);
+         SetWindowTextf(GET_HANDLE(GDT_MODE), "%s%s", Mode_text[mode + 1],
+            REG(ACSR)[2] == 1 ? " / Input Capture" : "");
+      }
    }
 }
 
