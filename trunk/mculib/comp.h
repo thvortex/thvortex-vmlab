@@ -19,9 +19,10 @@
 //
 
 #define GDT_ACSR     GADGET1
-#define GDT_VPLUS    GADGET2
-#define GDT_VMINUS   GADGET3
-#define GDT_MODE     GADGET4
-#define GDT_LOG      GADGET5
-#define GDT_LPLUS    GADGET6
-#define GDT_LMINUS   GADGET7
+#define GDT_DIDR     GADGET2
+#define GDT_VPLUS    GADGET3
+#define GDT_VMINUS   GADGET4
+#define GDT_MODE     GADGET5
+#define GDT_LOG      GADGET6
+#define GDT_LPLUS    GADGET7
+#define GDT_LMINUS   GADGET8
