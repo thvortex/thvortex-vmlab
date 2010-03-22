@@ -26,6 +26,7 @@
 #define RC_INVOKED 1
 #endif
 #include <blackbox.h>  // File located in <VMLAB install dir>/bin
+#include "version.h"
 #include "wdog.h"
 
 #define W_CELL 171  // Width imposed by the expandable window where to fit. DO NOT modify
@@ -70,8 +71,8 @@ FONT 8, "MS Sans Serif"
 // Info displayed under "Version" tab in Windows Explorer. Due to a serious bug
 // in the Borland RC compiler, all values must end with an explicit NULL.
 1 VERSIONINFO
-FILEVERSION       0,4,0,0
-PRODUCTVERSION    3,15,0,0
+FILEVERSION       MCULIB_FILEVERSION
+PRODUCTVERSION    MCULIB_PRODUCTVERSION
 FILEOS            VOS__WINDOWS32
 FILETYPE          VFT_DLL
 {
@@ -81,12 +82,12 @@ FILETYPE          VFT_DLL
       {
          VALUE "CompanyName",      "Wojciech Stryjewski\0"
          VALUE "FileDescription",  "AVR Watchdog Timer\0"
-         VALUE "FileVersion",      "v0.4\0"
+         VALUE "FileVersion",      MCULIB_FILEVERSION_STR
          VALUE "InternalName",     "WDOG\0"
          VALUE "LegalCopyright",   "2010, GNU LGPL v2.1+\0"
          VALUE "OriginalFilename", "wdog.dll\0"
          VALUE "ProductName",      "VMLAB\0"
-         VALUE "ProductVersion",   "3.15\0"
+         VALUE "ProductVersion",   MCULIB_PRODUCTVERSION_STR
       }
    }
    BLOCK "VarFileInfo" { VALUE "Translation", 0x0409 0x04E4 }

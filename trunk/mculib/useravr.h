@@ -1,10 +1,7 @@
 // =============================================================================
 // Common include file for all AVR peripherals
 //
-// Version History:
-// v0.1 09/15/09 - Initial release as part of TIMER0 model
-//
-// Copyright (C) 2009 Wojciech Stryjewski <thvortex@gmail.com>
+// Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
@@ -33,7 +30,18 @@
 // On_notify() codes; shared by all peripheral modules. Be careful about inserting/removing
 // enums since the remaining ones are renumbered and this can cause compatibility issues
 // when some DLL files are not recompiled.
-enum {NTF_PRR0, NTF_PRR1, NTF_TSM, NTF_PSR, NTF_WDR, NTF_WDRF1, NTF_WDRF0};
+enum {
+   NTF_PRR0,     // DUMMY -> * : Peripheral enabled in PRR (bit set to 0)
+   NTF_PRR1,     // DUMMY -> * : Peripheral disabled in PRR (bit set to 1) 
+   NTF_TSM,      // DUMMY -> TIMER* : Freeze timer prescaler in TSM mode
+   NTF_PSR,      // DUMMY -> TIMER* : Reset/unfreeze timer prescaler
+   NTF_WDR,      // DUMMY -> WDOG : Reset watchdog prescaler due to WDR
+   NTF_WDRF1,    // DUMMY -> WDOG : Watchdog forced on if MCUSR[WDRF]=1 
+   NTF_WDRF0,    // DUMMY -> WDOG : Can turn off watchdog when MCUSR[WDRF]=0
+   NTF_ACIC_OFF, // COMP -> TIMER1 : Restore input capture when ACSR[ACIC]=0
+   NTF_ACIC_0,   // COMP -> TIMER1 : Falling edge on ACSR[ACO] when ACSR[ACIC]=1
+   NTF_ACIC_1,   // COMP -> TIMER1 : Rising edge on ACSR[ACO] when ACSR[ACIC]=1
+};
 
 char *hex(const WORD8 &pData)
 //*******************

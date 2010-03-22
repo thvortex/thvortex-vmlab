@@ -20,8 +20,14 @@
 //
 // =============================================================================
 
-#define IS_PERIPHERAL
-#include <blackbox.h>
+#include <windows.h>
+#include <commctrl.h>
+#define IS_PERIPHERAL 1
+#ifndef RC_INVOKED
+#define RC_INVOKED 1
+#endif
+#include <blackbox.h>  // File located in <VMLAB install dir>/bin
+#include "version.h"
 #include "timer0_168.h"
 
 // Syntax to add/modify new controls
@@ -72,9 +78,9 @@ FONT 8, "MS Sans Serif"
 
 // Info displayed under "Version" tab in Windows Explorer. Due to a serious bug
 // in the Borland RC compiler, all values must end with an explicit NULL.
-VS_VERSION VERSIONINFO
-FILEVERSION       0,4,0,0
-PRODUCTVERSION    3,15,0,0
+1 VERSIONINFO
+FILEVERSION       MCULIB_FILEVERSION
+PRODUCTVERSION    MCULIB_PRODUCTVERSION
 FILEOS            VOS__WINDOWS32
 FILETYPE          VFT_DLL
 {
@@ -84,12 +90,12 @@ FILETYPE          VFT_DLL
       {
          VALUE "CompanyName",      "Advanced MicroControllers Tools, Wojciech Stryjewski\0"
          VALUE "FileDescription",  "ATmega168 TIMER0 Peripheral\0"
-         VALUE "FileVersion",      "v0.4\0"
+         VALUE "FileVersion",      MCULIB_FILEVERSION_STR
          VALUE "InternalName",     "TIMER0\0"
          VALUE "LegalCopyright",   "2009-2010, GNU LGPL v2.1+\0"
          VALUE "OriginalFilename", "timer0_168.dll\0"
          VALUE "ProductName",      "VMLAB\0"
-         VALUE "ProductVersion",   "3.15\0"
+         VALUE "ProductVersion",   MCULIB_PRODUCTVERSION_STR
       }
    }
    BLOCK "VarFileInfo" { VALUE "Translation", 0x0409 0x04E4 }
