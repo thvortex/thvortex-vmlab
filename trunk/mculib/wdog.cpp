@@ -567,6 +567,7 @@ void On_interrupt_start(INTERRUPT_ID pId)
          
          // If WDE=1 (Interrupt and Reset), then set WDIE=0 (Reset only)
          if(REG(WDTCSR)[3] == 1) {
+            SET_INTERRUPT_ENABLE(WDT, false);
             REG(WDTCSR).set_bit(6, 0);
             VAR(Dirty) = true;
          }
