@@ -168,7 +168,9 @@ DECLARE_VAR
 #ifdef TIMER_N
    int _TMP_regid;         // Register ID by which TMP was last accessed
    WORD8 _TMP_buffer;      // For high byte access in 16-bit timers
-   WORD8 _READ_buffer;     // For high-byte access in On_register_read()   
+   WORD8 _READ_buffer;     // For high-byte access in On_register_read()
+   bool _ACIC_enabled;     // True if input capture using analog comparator
+   LOGIC _ICP_last;        // Last logic value seen on input capture edge detector
 #endif
 END_VAR
 #define Dirty VAR(_Dirty)                  // To simplify readability...
@@ -205,6 +207,8 @@ END_VAR
 #define Async_ticks VAR(_Async_ticks)
 #define Async_update VAR(_Async_update)
 #define OCA_toggle_ok VAR(_OCA_toggle_ok)
+#define ACIC_enabled VAR(_ACIC_enabled)
+#define ICP_last VAR(_ICP_last)
 
 // Constant WORD8 value with all bits unknown. Returned by On_register_read()
 // if the timer registers are accessed while the timer is disabled due to
@@ -570,10 +574,14 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
        //--------------------------------------------------
           REGHL(TCNTn) = pData & MASK[Top];
           Compare_blocked = true;
+#if 0
+          // TODO: This warning scheduled for removal. It's not really an error and
+          // it created false positives for a forum user.
           // TODO: If TSM is on and clock perios is not 1 then the clock is not
           // really running and this warning should not be printed
           if(Clock_source != CLK_STOP && Clock_source != CLK_UNKNOWN)
              WARNING("TCNTn modified while running", CAT_TIMER, WARN_PARAM_BUSY);
+#endif
        end_register
 
        case_register(OCRnA, 0xFF)  // Output Compare Register A
@@ -684,29 +692,42 @@ void On_port_edge(PORT pPort, EDGE pEdge, double pTime)
    switch (pPort) {
       case XCLK:  On_XCLK_edge(pEdge); break;
 #ifdef TIMER_N
-      case ICP:   On_ICP_edge(pEdge); break;
+      case ICP:
+         // Only use ICP pin if comparator input capture is disabled
+         if(!ACIC_enabled) {
+            On_ICP_edge(pEdge == RISE ? 1 : 0);
+         }
+         break;
 #endif
    }
 }
 
 #ifdef TIMER_N
-void On_ICP_edge(EDGE pEdge)
+void On_ICP_edge(LOGIC pState)
 //*****************************************************
 // Handle input capture
 {   
-   // Using ICR as TOP value disable input capture
-   if(Top != VAL_ICR) {
+   // Using ICR as TOP value disable input capture. Only trigger input capture
+   // if the new input state is different from previous. This is needed because
+   // (a) the comparator could send a double notify for the same state (once
+   // from On_register_write() and once form On_time_step()) and because
+   // (b) when setting ACIC=0 in ACSR, an input capture can be generated if
+   // the ICP pin has a different value than the previous state in ICP_last
+   if(Top != VAL_ICR && pState != ICP_last) {
    
       // Check edge on ICP pin against ICESn bit in TCCRnB
-      if( (REG(TCCRnB)[6] == 0 && pEdge == FALL) || 
-          (REG(TCCRnB)[6] == 1 && pEdge == RISE) ) {
+      if( (REG(TCCRnB)[6] == 0 && pState == 0) || 
+          (REG(TCCRnB)[6] == 1 && pState == 1) ) {
                    
          // Generate CAPT interrupt and copy TCNTn register to ICRn
          SET_INTERRUPT_FLAG(CAPT, FLAG_SET);
          REG(ICRnH) = REG(TCNTnH);
          REG(ICRn) = REG(TCNTn);
       }
+      
    }
+
+   ICP_last = pState;
 }
 #endif
 
@@ -757,6 +778,8 @@ void On_reset(int pCause)
    TMP_buffer = 0;
    Top = VAL_FFFF;
    Overflow = VAL_FFFF;
+   ACIC_enabled = false;
+   ICP_last = GET_LOGIC(ICP);
 #else
    Top = VAL_FF;
    Overflow = VAL_FF;
@@ -791,7 +814,7 @@ void On_notify(int pWhat)
    int wasDisabled;
 
    switch(pWhat) {
-      case NTF_PRR0:                 // A 0 set in PPR register bit for TIMER 0
+      case NTF_PRR0:                 // A 0 set in PPR register bit for TIMER
          wasDisabled = Is_disabled();
          PRR = false;
          if(wasDisabled & !Is_disabled()) {
@@ -801,7 +824,7 @@ void On_notify(int pWhat)
          }
          break;
 
-      case NTF_PRR1:                 // A 1 set in PPR register bit for TIMER 0
+      case NTF_PRR1:                 // A 1 set in PPR register bit for TIMER
          wasDisabled = Is_disabled();
          PRR = true;
          if(!wasDisabled && Is_disabled()) {
@@ -827,7 +850,6 @@ void On_notify(int pWhat)
 #else
          Log("Prescaler reset by PSRSYNC");
 #endif
-         
          // Restart counter if previously disabled by TSM
          if (TSM) {              
             Log("Finished TSM");         
@@ -836,6 +858,28 @@ void On_notify(int pWhat)
          }
          
          Go();
+         break;
+
+#ifdef TIMER_N      
+      case NTF_ACIC_1:       // Analog comparator input capture rising edge
+         ACIC_enabled = true;
+         On_ICP_edge(1);
+         break;
+         
+      case NTF_ACIC_0:       // Analog comparator input capture falling edge
+         ACIC_enabled = true;
+         On_ICP_edge(0);
+         break;
+      
+      case NTF_ACIC_OFF:     // Analog comparator input capture disabled         
+         ACIC_enabled = false;
+         
+         // Switching back to ICP pin can trigger an input capture if the
+         // ICP pin state is different from the previous comparator state
+         On_ICP_edge(GET_LOGIC(ICP));
+         break;
+#endif      
+      default:
          break;
    }
 }
@@ -1051,7 +1095,7 @@ void Go()
 // Schedule the next timer tick if the counter is not disabled and using the
 // internal clock source. Called on every timer tick, each time the counter
 // is re-enabled, and each time the clock source changes. The Tick_signature
-// is updated each item to cancel any already pending ticks which may no longer
+// is updated each time to cancel any already pending ticks which may no longer
 // be valid. For TIMER2 in 32kHz asynchronous mode, this function never
 // schedules timer ticks.
 {
@@ -1318,8 +1362,12 @@ void Update_waveform()
    if(newWaveform != Waveform) {
       Waveform = newWaveform;
       Log("Updating waveform: %s (TOP=%s)", Wave_text[Waveform], Top_text[Top]);
+#if 0
+      // TODO: This warning scheduled for removal. It's not really an error and
+      // it could cause false positives just like the TCNT=0 warning
       if(Clock_source != CLK_STOP) // TODO: Don't issue warning if in TSM mode
       	WARNING("Changing waveform while the timer is running", CAT_TIMER, WARN_PARAM_BUSY);
+#endif
       if(Waveform == WAVE_RESERVED)
          WARNING("Reserved waveform mode", CAT_TIMER, WARN_PARAM_RESERVED);
    }
@@ -1384,8 +1432,12 @@ void Update_waveform()
    if(newWaveform != Waveform) {
       Waveform = newWaveform;
       Log("Updating waveform: %s (TOP=%s)", Wave_text[Waveform], Top_text[Top]);
+#if 0
+      // TODO: This warning scheduled for removal. It's not really an error and
+      // it could cause false positives just like the TCNT=0 warning
       if(Clock_source != CLK_STOP) // TODO: Don't issue warning if in TSM mode
       	WARNING("Changing waveform while the timer is running", CAT_TIMER, WARN_PARAM_BUSY);
+#endif
       if(Waveform == WAVE_RESERVED)
          WARNING("Reserved waveform mode", CAT_TIMER, WARN_PARAM_RESERVED);
    }
@@ -1524,8 +1576,12 @@ void Update_clock_source()
    }
 
    if(newClockSource != Clock_source) {
+#if 0
+      // TODO: This warning scheduled for removal. It's not really an error and
+      // it could cause false positives just like the TCNT=0 warning
       if(Clock_source != CLK_STOP && newClockSource != CLK_STOP)
          WARNING("Changed clock source while running", CAT_TIMER, WARN_PARAM_BUSY);
+#endif
       Clock_source = newClockSource;
       Log("Updating clock source: %s", Clock_text[Clock_source]);
    }
