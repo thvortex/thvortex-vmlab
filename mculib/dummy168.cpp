@@ -552,9 +552,10 @@ void On_port_edge(const char *pPortName, int pBit, EDGE pEdge, double pTime)
 // Handle external interrupts. Parameter pPortName contains the involved port
 // name "PA", "PB", etc, as defined in .INI file. pBit is the bit nr, 0 - 7
 {
-   char buf[128];
-   sprintf(buf, "%s%d = %d", pPortName, pBit, pEdge);
-   PRINT(buf);
+   // TODO: Delete this later
+   //char buf[128];
+   //sprintf(buf, "%s%d = %d", pPortName, pBit, pEdge);
+   //PRINT(buf);
 
    switch (pPortName[1]) { // See the 2nd letter, A, B, C, etc
       case 'B':
