@@ -331,8 +331,8 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
       {
          Log_register_write(DIDR, pData, 0x03); // Only bits 0-1 valid
          
-         Disable_digital(AIN0, pData[1] == 1);
-         Disable_digital(AIN1, pData[0] == 1);
+         Disable_digital(AIN0, pData[0] == 1);
+         Disable_digital(AIN1, pData[1] == 1);
          
          REG(DIDR) = pData & 0x03;
          break;
@@ -355,9 +355,8 @@ void On_time_step(double pTime)
    // Update ACO bit with comparator output. If comparator is currently
    // disabled with ACD=1, then force ACO=0 which could possibly generate
    // an interrupt. This ACO behavior with ACD=1 was verified on real
-   // ATmega48 hardware. For performance reasons, only call Measure() to
-   // For performance reasons, Measure() is only called to sample new
-   // voltages if the comparator is not disabled.
+   // ATmega48 hardware. For performance reasons, Measure() is only called
+   // to sample new voltages if the comparator is not disabled.
    LOGIC oldOutput = REG(ACSR)[5];
    LOGIC newOutput = 0;
    if(REG(ACSR)[7] != 1) {
