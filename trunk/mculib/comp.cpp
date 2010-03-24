@@ -18,10 +18,6 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-// NOTE: Because the VMLAB API does not have a "pTime" argument in
-// On_register_write(), it's necessary to keep track of the explicit prescaler
-// counter value and to only use REMIND_ME() with a fixed 128kHz period.
-
 #include <windows.h>
 #include <commctrl.h>
 #include <stdio.h>
@@ -81,7 +77,6 @@ END_INTERRUPTS
 // Declare variables here to allow multiple instances to be placed
 //
 DECLARE_VAR
-
    double Positive;       // Last voltage seen on AIN0 or positive input
    double Negative;       // Last voltage seen on AIN1 or negative input
 
@@ -155,6 +150,15 @@ void Interrupt()
 //*************************
 // Generate ACI interrupt and set ACI flag in ACSR
 {
+   // TODO: Workaround for VMLAB 3.15 which does not automatically disable
+   // all interrupts after a MCU reset. Since SET_INTERRUPT_ENABLE() has no
+   // effect from On_reset(), it's possible that a previously enabled ACI
+   // will remain enabled after reset even though ACIE=0 in ACSR on reset.
+   // However, since this is the only place where a flag can be set, we
+   // can call SET_INTERRUPT_ENABLE() here to ensure that VMLAB's internal
+   // interrupt enable matches the contents of the ACIC bit.
+   SET_INTERRUPT_ENABLE(ACI, REG(ACSR)[3] == 1);   
+   
    SET_INTERRUPT_FLAG(ACI, FLAG_SET);
    REG(ACSR).set_bit(4, 1);
 }
