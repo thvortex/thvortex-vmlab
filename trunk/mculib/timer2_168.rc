@@ -74,9 +74,9 @@ FONT 8, "MS Sans Serif"
  CONTROL "$??", GDT_BUFB, "static", SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE | WS_DISABLED, 149, 36, 15, 10
  CONTROL "Top:", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 61, 17, 10
  CONTROL "?",   GDT_TOP, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 96, 61, 22, 10
- CONTROL "Log", GDT_LOG, "button", BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE, 137, 61, 25, 8
+ CONTROL "Log", GDT_LOG, "button", BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 137, 61, 25, 8
  CONTROL "BUF", GDT_BUF, "static", SS_LEFT | WS_CHILD | WS_VISIBLE | WS_DISABLED, 149, 13, 16, 8
- CONTROL "Async Corrupt", GDT_CRPT, "button", BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE, 106, 49, 60, 8
+ CONTROL "Async Corrupt", GDT_CRPT, "button", BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 106, 49, 60, 8
 }
 
 // Info displayed under "Version" tab in Windows Explorer. Due to a serious bug
