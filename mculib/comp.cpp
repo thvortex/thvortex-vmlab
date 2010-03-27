@@ -240,7 +240,6 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
 //**********************
 // The micro is writing pData into the pId register This notification
 // allows to perform all the derived operations.
-// Register selection macros include the "case", X bits check and logging
 {
    switch(pId) {
       case ACSR:
