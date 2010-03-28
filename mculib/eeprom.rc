@@ -1,0 +1,97 @@
+// =============================================================================
+// Component Name: AVR EEPROM peripheral
+//
+// Copyright (C) 2010 Wojciech Stryjewski <thvortex@gmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation; either version 2.1 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+//
+// =============================================================================
+
+#include <windows.h>
+#include <commctrl.h>
+#define IS_PERIPHERAL 1
+#ifndef RC_INVOKED
+#define RC_INVOKED 1
+#endif
+#include <blackbox.h>  // File located in <VMLAB install dir>/bin
+#include "version.h"
+#include "eeprom.h"
+
+// Syntax to add/modify new controls
+// *********************************
+//
+// CONTROL <text>, <gadget ID>, <class>, <styles>, <left>, <top>, <width>, <height>
+//
+//    <text>: Any text; this will be displayed in the control (if applies).
+//    <gadget ID>: A value, GADGET0 to GADGET31, or -1 for non-modifiable controls
+//       (decorations, texts, etc)
+//    <class>: A Win32 standard control class name: "button", "static", "listbox", etc.
+//       or... own custom-class name (for advanced Win32 users)
+//    <styles>: A valid Win32 attribute/style for the control.
+//    <left>, <top>, <width>, <height>: Coordinates in dialog units (not pixels!)
+
+
+// Register displays must be always be coded with the "WORD_8_VIEW_c" class name.
+//
+WINDOW_USER_1 DIALOG 0, 0, WIDTH, 72
+STYLE WS_CHILD | WS_VISIBLE
+FONT 8, "MS Sans Serif"
+{
+   CONTROL "", EXPAND_FRAME, "button", BS_GROUPBOX | WS_CHILD | WS_VISIBLE | WS_GROUP, 2, 0, WIDTH - 6, 69
+   CONTROL "", EXPAND_BUTTON, "button", BS_AUTOCHECKBOX | BS_PUSHLIKE | WS_CHILD | WS_VISIBLE, 7, 0, 8, 8
+
+   CONTROL "%", GDT_EEARH + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 13, 28, 8 
+   CONTROL "", GDT_EEARH, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 12, 42, 10 
+   CONTROL "%", GDT_EEARL + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 13, 28, 8 
+   CONTROL "", GDT_EEARL, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE,106, 13, 42, 10 
+   CONTROL "%", GDT_EEDR + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 25, 25, 8 
+   CONTROL "", GDT_EEDR, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 24, 42, 10 
+   CONTROL "%", GDT_EECR + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 25, 25, 8 
+   CONTROL "", GDT_EECR, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 106, 24, 42, 10 
+
+   CONTROL "View", GDT_VIEW, "button", BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 6, 43, 26, 12 
+   CONTROL "Load", GDT_LOAD, "button", BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 38, 43, 26, 12 
+   CONTROL "Save", GDT_SAVE, "button", BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 67, 43, 26, 12 
+   CONTROL "Erase", GDT_ERASE, "button", BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 100, 43, 26, 12 
+
+   CONTROL "Log", GDT_LOG, "button", BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 137, 46, 25, 8 
+   CONTROL "Auto save", GDT_AUTOSAVE, "button", BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_DISABLED | WS_TABSTOP, 117, 58, 46, 8 
+   CONTROL "Simulate erase/write time", GDT_SIMTIME, "button", BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 6, 58, 94, 8 
+}
+
+// Info displayed under "Version" tab in Windows Explorer. Due to a serious bug
+// in the Borland RC compiler, all values must end with an explicit NULL.
+1 VERSIONINFO
+FILEVERSION       MCULIB_FILEVERSION
+PRODUCTVERSION    MCULIB_PRODUCTVERSION
+FILEOS            VOS__WINDOWS32
+FILETYPE          VFT_DLL
+{
+   BLOCK "StringFileInfo"
+   {
+      BLOCK "040904E4"
+      {
+         VALUE "CompanyName",      "Wojciech Stryjewski\0"
+         VALUE "FileDescription",  "AVR EEPROM\0"
+         VALUE "FileVersion",      MCULIB_FILEVERSION_STR
+         VALUE "InternalName",     "EEPROM\0"
+         VALUE "LegalCopyright",   "2010, GNU LGPL v2.1+\0"
+         VALUE "OriginalFilename", "eeprom.dll\0"
+         VALUE "ProductName",      "VMLAB\0"
+         VALUE "ProductVersion",   MCULIB_PRODUCTVERSION_STR
+      }
+   }
+   BLOCK "VarFileInfo" { VALUE "Translation", 0x0409 0x04E4 }
+}
