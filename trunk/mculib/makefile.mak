@@ -1,5 +1,5 @@
 # =============================================================================
-# Makefile for building AVR peripherals (use with Borland BCC 5.5 in path)
+# Makefile for building AVR peripherals (use with Borland BCC 5.5)
 #
 # Copyright (C) 2010 Wojciech Stryjewski <thvortex@gmail.com>
 #
@@ -20,8 +20,8 @@
 
 
 # All the DLL files that need to be included in "mculib"
-all:	dummy168.dll timer0_168.dll timer2_168.dll timerN_168.dll \
-      wdog.dll comp.dll
+all:  dummy168.dll timer0_168.dll timer2_168.dll timerN_168.dll \
+      wdog.dll comp.dll eeprom.dll
 
 # Resource files need explicit dependencies (not handled by .autodepend)
 dummy168.dll:     dummy168.res
@@ -30,6 +30,7 @@ timer2_168.dll:   timer2_168.res
 timerN_168.dll:   timerN_168.res
 wdog.dll:         wdog.res
 comp.dll:         comp.res
+eeprom.dll:       eeprom.res
 
 dummy168.res:     version.h
 timer0_168.res:   version.h timer0_168.h
@@ -37,26 +38,35 @@ timer2_168.res:   version.h timer2_168.h
 timerN_168.res:   version.h timerN_168.h
 wdog.res:         version.h wdog.h
 comp.res:         version.h comp.h
+eeprom.res:       version.h eeprom.h
          
 # Suffixes directive needed to make implicit rules work properly
-# Automatically track include files in .obj; doesn't work for includes in .rc
+# Autodepend tracks include files in .obj; doesn't work for includes in .rc
 .suffixes: .cpp .rc .obj
 .autodepend
 
-# Directories, libraries, and startup .obj for linker and other tools
+# Absolute pathnames to the tools; they don't have to be in the path
+CC        = ${MAKEDIR}\bcc32
+LD        = ${MAKEDIR}\ilink32
+RC        = ${MAKEDIR}\brcc32
+
+# Directories, libraries, and startup .obj for linker and compilers
+# Based on the command lines used in VMLAB's usercomp.exe tool
 INCLUDE   = ${MAKEDIR}\..\include
 LIBDIR    = ${MAKEDIR}\..\lib
 STARTUP   = ${LIBDIR}\c0d32.obj
 LIBS      = ${LIBDIR}\import32.lib ${LIBDIR}\cw32.lib
 
 # Flags passed to C++ compiler, linker, and resource compiler
+# Initially based on VMLAB's usercomp.exe tool. OPTFLAGS was added to contain
+# all the speed optimizations found in Borland's help file.
 OPTFLAGS  = -O -O2 -Oc -Oi -OS -Ov
 CPPFLAGS  = -I"${INCLUDE}" -H -w-par -WM- -vi -WD ${OPTFLAGS}
 LDFLAGS   = -L"${LIBDIR}; ${LIBDIR}\psdk" -Tpd -aa -x
 RFLAGS    = -I"${INCLUDE}"
 
 
-# Delete all temporary (and final DLLs) files created while compiling
+# Delete all temporary (and final DLL) files created while compiling
 clean:
    del *.il? *.obj *.res *.tds
 distclean: clean
@@ -64,4 +74,4 @@ distclean: clean
    
 # Implicit rule for linking .obj and .res into .dll
 .obj.dll:
-   ilink32 ${LDFLAGS} ${STARTUP} $**,$@, ,${LIBS}, ,$&.res
+   ${LD} ${LDFLAGS} ${STARTUP} $**,$@, ,${LIBS}, ,$&.res
