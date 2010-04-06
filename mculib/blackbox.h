@@ -676,7 +676,7 @@ public:
    //********************************
    // Toggles a given bit. Does not change x value
    {
-      d(d ^ (1 << pBit));
+      d(d() ^ (1 << pBit));
    }
 
    void set_bit(UINT pBit, LOGIC pValue)
