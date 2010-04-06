@@ -41,6 +41,19 @@
 int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {return 1;} // is DLL
 // =============================================================================
 
+// EEPROM programming mode in EEPMx bits
+// NOTE: WORD8::get_field() returns -1 for unknown bits
+enum { MODE_UNKNOWN = -1, MODE_ATOMIC, MODE_ERASE, MODE_WRITE, MODE_RESERVED };
+const char *Mode_text[] = {
+   "?", "Erase / Write", "Erase", "Write", "Reserved"
+};
+
+// EEPROM write/erase times corresponding to each of the MODE_xxx constants
+double Delay_time[] = { 0, 3.4e-3, 1.8e-3, 1.8e-3, 0 };
+
+// Action codes used with REMIND_ME() -> On_remind_me() (must tbe even ints)
+enum { RMD_AUTOCLEAR_EEMPE, RMD_AUTOCLEAR_EEPE };
+
 // Involved ports. Keep same order as in .INI file "Port_map = ..." who
 // does the actual assignment to micro ports PD0, etc. This allows multiple instances
 // to be mapped into different port sets
@@ -80,6 +93,7 @@ DECLARE_VAR
 
    bool Log;            // True if the "Log" checkbox button is checked
    bool Delay;          // True if the "Simulate write/erase time" is checked
+   bool Save;           // True if the "Auto save" checkbox button is checked
 END_VAR
 
 USE_WINDOW(WINDOW_USER_1); // Window to display registers, etc. See .RC file
@@ -152,6 +166,94 @@ void Log_register_write(int pId, WORD8 pData, unsigned char pMask)
    }
 }
 
+int Decode_address()
+//*************************
+// Decode and return the EEPROM memory address stored in EEAR registers. If
+// the address is invalid then return -1 and issue the appropriate warning
+// messages.
+{
+   // Read EEARL/EAARH pair as little-endian 16bit value
+   WORD16LE *addr = (WORD16LE *) &REG(EEARL);
+   
+   if(!addr->known()) {
+      WARNING("Unknown (X) bits in EEAR registers",
+         CAT_EEPROM, WARN_EEPROM_ADDRES_OUTSIDE);
+      return -1;
+   } else if(addr->d() > VAR(Size)) {
+      WARNING("Address in EEAR registers out of range",
+         CAT_EEPROM, WARN_EEPROM_ADDRES_OUTSIDE);
+      return -1;
+   }
+   
+   return addr->d();
+}
+
+void Write_EEPROM()
+//*************************
+// Called from On_register_write() to handle all the details of writing the
+// EEPROM memory depending on the current EEPM mode bits.
+{
+   // Tread UNKNOWN bits in EEDR as zero; they can't be saved to a HEX file
+   UCHAR data = REG(EEDR).d() & REG(EEDR).x();
+   
+   int addr = Decode_address();
+   if(addr != -1) {
+      
+      // Perform different action depending on EEPM mode bits
+      switch(REG(EECR).get_field(5,4)) {
+
+         case MODE_UNKNOWN:
+            WARNING("Unknown EEPM value in EECR; EEPROM write ignored",
+               CAT_EEPROM, WARN_MEMORY_WRITE_X_IO);         
+            break;
+
+         case MODE_RESERVED:
+            WARNING("Reserved EEPM value in EECR; EEPROM write ignored",
+               CAT_EEPROM, WARN_PARAM_RESERVED);
+            break;
+            
+         case MODE_ATOMIC:
+            Log("Write EEPROM[$%04X]=$%02X", addr, data);
+            VAR(Memory)[addr] = data;
+            break;
+         
+         case MODE_ERASE:
+            Log("Erase EEPROM[$%04X]", addr);
+            VAR(Memory)[addr] = 0xFF;
+            break;
+                  
+         case MODE_WRITE:
+            // A write only operation can change a 1 bit to a 0 in EEPROM or
+            // can leave the bit set to the current value, but only erase or
+            // atomic write can change a 0 bit back to a 1. If this condition
+            // is violated, issue a warning and mask new data so existing 0
+            // bits don't change to 1.
+            if(data & ~VAR(Memory)[addr]) {
+               WARNING("Cannot change EEPROM bit from 0 to 1 in write-only mode (EEPMx=10)",
+                  CAT_EEPROM, WARN_MISC);
+            }            
+            data &= VAR(Memory)[addr];
+            Log("Write EEPROM[$%04X]=$%02X", addr, data);
+            VAR(Memory)[addr] = data;            
+            break;         
+      }
+      
+      // If VAR(Delay) true then simulate the write/erase programming delay by
+      // setting EEPE=1 to indicate EEPROM is busy and scheduling REMIND_ME()
+      // to set EEPE=0 when the programming is finished. 
+      if(VAR(Delay)) {
+
+         // The +1 is needed in case get_field() returns -1 becaue unknown (X)
+         // bits are present. Unknown/reserved moves have a zero delay.
+         double delay = Delay_time[REG(EECR).get_field(5,4) + 1];
+         if(delay > 0) {
+            REG(EECR).set_bit(1, 1);
+            REMIND_ME(delay, RMD_AUTOCLEAR_EEPE);
+         }
+      }
+   }
+}
+
 // =============================================================================
 // Callback functions. These functions are called by VMLAB at the proper time
 
@@ -205,6 +307,8 @@ void On_destroy()
    }
 }
 
+// TODO: Need On_window_init() to set initial checkboxes
+
 void On_simulation_begin()
 //**********************
 // Called at the beginning of simulation.
@@ -250,9 +354,8 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
 //**********************
 // The micro is writing pData into the pId register. This notification
 // allows to perform all the derived operations.
-{
-   // Bitmask applied to register assignment (all bits R/W by default)
-   UCHAR mask;
+{   
+   UCHAR mask;     // Bitmask applied to register assignment
    
    switch(pId) {
          
@@ -267,9 +370,10 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
          Log_register_write(pId, pData, mask);
          
          if(REG(EECR)[1] == 1) {
-            WARNING("Cannot write EEAR registers while EEPE=1 (EEPROM busy)",
+            WARNING("Cannot write EEAR registers while EEPROM busy (EEPE=1)",
                CAT_EEPROM, WARN_WRITE_BUSY);
-            mask = 0; // Inhibit register assignment
+         } else {
+            REG(pId) = pData & mask;
          }
          
          break;
@@ -279,51 +383,106 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
       // No special processing required.
       // TODO: Can EEDR be modified while write/erase in progress?
       case EEDR:
-         mask = 0xFF;
-         Log_register_write(EEDR, pData, mask);
+         Log_register_write(EEDR, pData, 0xFF);
+         REG(EEDR) = pData;
          break;
       
       // EEPROM control register
       //---------------------------------------------------------
       case EECR:
          mask = VAR(EECR_mask);
-         Log_register_write(EECR, pData, mask);
-         mask &= 0xFE; // EERE is a strobe bit and always reads 0 in register
+         Log_register_write(EECR, pData, mask);                  
+         pData = pData & mask;  // Mask unimplemented bits in EECR register
+
+         // Bits 5,4 - EEPMx: EEPROM Programming Mode Bits
+         //---------------------------------------------------------
+         // Mode change only allowed if EEPROM programming not already in
+         // progress (i.e. EEPE must be 0).
+         int newMode = pData.get_field(5,4);
+         if(newMode != REG(EECR).get_field(5,4)) {
+            if(REG(EECR)[1] == 1) {
+               WARNING("Cannot change EEPM if EEPROM already busy (EEPE=1)",
+                  CAT_EEPROM, WARN_PARAM_BUSY);
+            } else {
+               if(newMode == MODE_RESERVED) {
+                  WARNING("Reserved EEPM value written to EECR",
+                     CAT_EEPROM, WARN_PARAM_RESERVED);
+               }               
+               
+               // Assign individual bits to preserve positions of unknowns (X)
+               REG(EECR).set_bit(4, pData[4]);
+               REG(EECR).set_bit(5, pData[5]);               
+               
+               Log("Update mode: %s", Mode_text[newMode + 1]);
+            }
+         }
+
+         // Bit 3 - EERIE: EEPROM Ready Interrupt Enable
+         //---------------------------------------------------------
+         REG(EECR).set_bit(3, pData[3]);
+         SET_INTERRUPT_ENABLE(ERDY, pData[3] == 1);
+
+         // Bit 2 - EEMPE: EEPROM Write/Erase Enable
+         //---------------------------------------------------------
+         // EEMPE can only be set if EEPE=0; if EEPE=1 in the register write
+         // then alwahys force EEMPE=0. Can write EEMPE=0 or EEMPE=X any time.
+         // TODO: If EEPE slready set, can EEMPE be set again?
+         // TODO: If the 4 cycle delay due to EERE is emulated one day, then
+         // the EEMPE bit will reset 4 cycles *after* the EERE delay.
+         if(pData[2] == 1) {
+            if(pData[1] == 1) {
+               REG(EECR).set_bit(2, 0);
+            } else {
+               REG(EECR).set_bit(2, 1);
+               REMIND_ME2(4, RMD_AUTOCLEAR_EEMPE);
+            }
+         } else {
+            REG(EECR).set_bit(2, pData[2]);
+         }
+                  
+         // Bit 1 - EEPE: EEPROM Write/Erase Enable
+         //---------------------------------------------------------
+         // If EEMPE=1 and EEPROM is not busy then perform selected write mode
+         if(pData[1] == 1) {
+            if(pData[2] == 1) {
+               WARNING("Cannot set EEMPE=1 and EEPE=1 at the same time",
+                  CAT_EEPROM, WARN_PARAM_BUSY);
+            } else if(REG(EECR)[2] != 1) {
+               WARNING("Cannot set EEPE=1 if EEMPE is not already set",
+                  CAT_EEPROM, WARN_PARAM_BUSY);
+            } else {
+               Write_EEPROM();
+            }
+         }
          
          // Bit 0 - EERE: EEPROM Read Enable
          //---------------------------------------------------------
          // If EEPROM is not busy then copy byte from memory buffer to EEDR.
-         // TODO: What happens if EERE=1 and EEPE=1 written at the same time?
-         // Does one take precedence over the other?         
          if(pData[0] == 1) {
             if(pData[1] == 1) {
-               WARNING("Cannot read and write/erase EEPROM at the same time",
+               WARNING("Cannot read (EERE=1) and write (EEPE=1) EEPROM at the same time",
                   CAT_EEPROM, WARN_EEPROM_SIMULTANEOUS_RW);
             } else if(REG(EECR)[1] == 1) {
-               WARNING("Cannot read EEPROM if write/erase already in progress",
+               WARNING("Cannot read (EERE=1) EEPROM if already busy (EEPE=1)",
                   CAT_EEPROM, WARN_EEPROM_SIMULTANEOUS_RW);
             } else {
-
-               // Read EEARL/EAARH pair as little-endian 16bit value
-               WORD16LE *addr = (WORD16LE *) &REG(EEARL);
-               if(!addr->known()) {
-                  WARNING("Unknown bits in EEAR registers",
-                     CAT_EEPROM, WARN_EEPROM_ADDRES_OUTSIDE);
-               } else if(addr->d() > VAR(Size)) {
-                  WARNING("Address in EEAR registers out of range",
-                     CAT_EEPROM, WARN_EEPROM_ADDRES_OUTSIDE);
-               } else {
-                  UCHAR data = VAR(Memory)[addr->d()];
+               int addr = Decode_address();
+               if(addr != -1) {
+                  // TODO: Reading the EEPROM requires an additional 4 cycle
+                  // CPU delay. This cannot be emulated using the current
+                  // VMLAB API.
+                  UCHAR data = VAR(Memory)[addr];
                   REG(EEDR) = data;
-                  Log("Read EEPROM[$%04X]=$%02X", addr->d(), data);
+                  Log("Read EEPROM[$%04X]=$%02X", addr, data);
                }
             }
          }
          
+         // ERDY interrupt is level triggered and always set if EEPE=0
+         SET_INTERRUPT_FLAG(ERDY, pData[1] == 0 ? FLAG_SET : FLAG_CLEAR);
+         
          break;
-   }
-   
-   REG(pId) = pData & mask;
+   }   
 }
 
 void On_reset(int pCause)
@@ -351,7 +510,27 @@ void On_reset(int pCause)
 
 void On_remind_me(double pTime, int pAux)
 //***************************************
+// Response to REMIND_ME() used implement the autoclearing of EEMPE after
+// 4 cycles and the autoclearing of EEPE after write/erase cycle finishes.
 {
+   switch(pAux) {
+   
+      // Autoclear EEPE after erase/write cycle finished and set level-
+      // triggered ERDY interrupt (only if simulating programming delay)
+      case RMD_AUTOCLEAR_EEPE:
+         REG(EECR).set_bit(1, 0);
+         SET_INTERRUPT_FLAG(ERDY, FLAG_SET);
+         break;
+      
+      // TODO: Add checks for multiple pending RMD_AUTOCLEAR_EEMPE
+      case RMD_AUTOCLEAR_EEMPE:
+         if(REG(EECR)[2] != 0) {
+            WARNING("EEMPE cleared by hardware; previously set 4 cycles ago",
+               CAT_EEPROM, WARN_MISC);
+         }
+         REG(EECR).set_bit(2, 0);
+         break;
+   }
 }
 
 void On_notify(int pWhat)
@@ -368,6 +547,8 @@ void On_sleep(int pMode)
    // entered while EEPROM is actively programming
 }
 
+// TODO: Need On_update_tick() and a "Mode:" display in the GUI
+
 void On_gadget_notify(GADGET pGadget, int pCode)
 //*********************************************
 // Response to Win32 notification coming from buttons, etc.
@@ -378,10 +559,4 @@ void On_gadget_notify(GADGET pGadget, int pCode)
    if(pGadget == GDT_SIMTIME && pCode == BN_CLICKED) {
       VAR(Delay) ^= 1;
    }
-}
-
-void On_interrupt_start(INTERRUPT_ID pId)
-//***********************************
-// Called when MCU begins to execute ERDY interrupt
-{
 }
