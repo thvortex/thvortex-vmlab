@@ -46,13 +46,17 @@ class Hexfile
 // the DELCARE_VAR section.
 {
 private:
-   static HWND VMLAB_window;  // Top level window that owns all dialog boxes
-   static HWND MDI_client;    // MDI client window inside VMLAB window
-   static HMODULE Library;    // Loaded ShineInHex.dll library
-   static ATOM MDI_class;     // Window class of MDI_child window
+   static HMODULE VMLAB_module; // Handle to VMLAB.EXE for icon loading
+   static HWND VMLAB_window;    // Top level window that owns all dialog boxes
+   static HWND MDI_client;      // MDI client window inside VMLAB window
+   static HMODULE Library;      // Loaded ShineInHex.dll library
+   static ATOM MDI_class;       // Window class of MDI_child window
+   static int Ref_count;        // Reference count for library/class unloading
 
    static const char CLASS_NAME[]; // Window class name used only internally
    
+   HINSTANCE Instance; // Saved copy of pInstance passed to init()
+   HICON Icon;      // Small icon resource used by child window
    HWND MDI_child;  // Child window of MDI_client containing HEX_child
    HWND HEX_child;  // The "shineinhex" class window inside MDI_child
    
@@ -103,7 +107,7 @@ public:
    Hexfile();
    ~Hexfile();
 
-   void init(HINSTANCE pInstance, HWND pWindow, char *pTitle = "", int pIcon = 0);   
+   void init(HINSTANCE pInstance, HWND pHandle, char *pTitle, int pIcon = 0);   
    void data(void *pPointer, int pSize, int pOffset = 0);
    
    void erase();
@@ -111,33 +115,36 @@ public:
    void save(char *pFile = NULL);
 
    void hide();
-   void show();      
+   void show();
+   void readonly(bool pReadOnly);
    void refresh();
 };
 
 // Definitions for all static class varialbes in Hexfile
+HMODULE Hexfile::VMLAB_module = NULL;
 HWND Hexfile::VMLAB_window = NULL;
 HWND Hexfile::MDI_client = NULL;
 ATOM Hexfile::MDI_class = NULL;
 HMODULE Hexfile::Library = NULL;
+int Hexfile::Ref_count = 0;
 const char Hexfile::CLASS_NAME[] = "VMLAB Hexfile Editor";
 
  Hexfile::Hexfile()
 //******************************
-// Default constructor allows Hexfile objects to be placed directly in the
-// DECLAVE_VAR block. Also responsible for loading the ShineInHex DLL which
-// makes the hex editor available as a new window class.
+// The default constructor allows Hexfile objects to be placed directly in
+// the DECLAVE_VAR block. The real initialization will hapen when the init()
+// function is called.
 {
-   // Windows does reference counting on LoadLibrary() and FreeLibrary()
-   // calls, so after the initial LoadLibrary() that does the real work,
-   // all subsequent LoadLibrary() calls will return the same HMODULE.
-   W32_ASSERT( Library = LoadLibrary("ShineInHex.dll") );
+   // Global reference count is used in destructor to release all class
+   // resources acquired in the very first init() call.
+   Ref_count++;
 }
 
 Hexfile::~Hexfile()
 //******************************
-// Destructor releases resource previously acquired in init(). The last the
-// Hexfile instance to be destroyed also releases global resources.
+// Destructor releases resource previously acquired in init(). Based on the
+// static reference count, the last Hexfile instance to be destroyed also
+// releases global resources acquired by the first init() call.
 {
    // TODO: Call HEXM_UNSETPOINTER before destroying windows?
 
@@ -146,23 +153,36 @@ Hexfile::~Hexfile()
       SendMessage(MDI_client, WM_MDIDESTROY, (WPARAM) MDI_child, 0);
    }
    
-   // When the last Hexfile instance is destroyed, then the library's
-   // reference count will drop to zero and it will be unloaded.
-   if(Library) {
-      W32_ASSERT( FreeLibrary(Library) );
+   // The last instance of the Hexfile class must also unregister the Win32
+   // window class and unload the DLL library from init(). All class variables
+   // are set to NULL so the next init() can re-initialize them.
+   Ref_count--;
+   if(Ref_count == 0) {
+      if(MDI_class) {
+         W32_ASSERT( UnregisterClass( (LPCTSTR) MDI_class, Instance) );
+         MDI_class = NULL;
+      }
+      if(Library) {
+         W32_ASSERT( FreeLibrary(Library) );
+         Library = NULL;
+      }
+      VMLAB_window = NULL;
+      MDI_client = NULL;
    }
-   
-   // TODO: Need to unregister class!!
-   // TODO: Use our own reference counter!!
 }
 
-void Hexfile::init(HINSTANCE pInstance, HWND pWindow, char *pTitle, int pIcon)
+void Hexfile::init(HINSTANCE pInstance, HWND pHandle, char *pTitle, int pIcon)
 //******************************
 // Must be called at least once on each Hexfile object before calling any
-// other methods.
+// other methods. The "pInstance" must have been saved by the caller from
+// the DllEntryPoint() or DllMain() function. The "pHandle" should be the
+// same as passed to the On_window_init() callback. The "pTitle" specifies
+// the window title of the child window. The "pIcon" is optional and specifies
+// the resource ID for a small icon to display in the corner of the window;
+// if the resource doesn't exist in the pInstance DLL then the main VMLAB
+// executable is searched.
 {
    // TODO: Verify args are not NULL; 
-   // TODO: Verity pInstance is same as before
    // TODO: Verify not already called on same window
    
    // First init() finds top-level VMLAB window so it can later be passed as
@@ -170,10 +190,18 @@ void Hexfile::init(HINSTANCE pInstance, HWND pWindow, char *pTitle, int pIcon)
    // FindWindow() cannot be used here because there could be two VMLAB
    // windows open if running in multiprocess mode.
    if(VMLAB_window == NULL) {
-      VMLAB_window = pWindow;
+      VMLAB_window = pHandle;
       while(HWND parent = GetParent(VMLAB_window)) {
          VMLAB_window = parent;
       }
+   }
+   
+   // Lookup the module handle to VMLAB.EXE from the window class of the
+   // main VMLAB window. This module handle is used in LoadIcon() later on
+   // to allow using icons from the main executable if an icon resource
+   // was not found in the user's component DLL.
+   if(VMLAB_module == NULL) {      
+      W32_ASSERT( VMLAB_module = (HINSTANCE) GetClassLong(VMLAB_window, GCL_HMODULE) );
    }
    
    // First init() finds the MDI client window which is a child of the
@@ -182,6 +210,28 @@ void Hexfile::init(HINSTANCE pInstance, HWND pWindow, char *pTitle, int pIcon)
    if(MDI_client == NULL) {
       W32_ASSERT( MDI_client = FindWindowEx(VMLAB_window, NULL,
          "MDIClient", NULL) );
+   }
+   
+   // Load DLL to automatically register "SHINEINHEX" window class
+   if(Library == NULL) {
+      W32_ASSERT( Library = LoadLibrary("ShineInHex.dll") );
+   }
+   
+   // The HINSTANCE must be saved so that it can be later passed to
+   // UnregisterClass() in the destructor.
+   if(Instance == NULL) {
+      Instance = pInstance;
+   }
+   
+   // Try to load specified icon resource first from user's DLL and failing
+   // that, from the main VMLAB executable. Because LoadIcon() returns a
+   // shared icon, it is not necessary to later unload the icon in the
+   // destructor.
+   if(Icon == NULL && pIcon) {
+      Icon = LoadIcon(pInstance, MAKEINTRESOURCE(pIcon));
+      if(Icon == NULL) {
+         W32_ASSERT( Icon = LoadIcon(VMLAB_module, MAKEINTRESOURCE(pIcon)) );
+      }
    }
 
    // Register custom window class to handle behavior of the MDI child window
@@ -193,12 +243,12 @@ void Hexfile::init(HINSTANCE pInstance, HWND pWindow, char *pTitle, int pIcon)
          0,                   // cbClsExtra (no extra class memory needed)
          0,                   // cbWndExtra (no extra window memory needed)
          pInstance,           // hInstance (DLL instance from DllEntryPoint)
-         NULL,                // hIcon (use icon() to set per window icon)
+         NULL,                // hIcon (large icon not used for child windows)
          NULL,                // hCursor (use default cursor) // TODO: use constant
          NULL,                // hbrBackground (hex editor fills entire window)
          NULL,                // lpszMenuName (no default class menu needed)
          CLASS_NAME,          // lpszClassName (class name used only in Hexfile)
-         NULL,                // hIconSm (use icon() to set per window icon)
+         Icon,                // hIconSm (small icon loaded from resource)
       };
       W32_ASSERT( MDI_class = RegisterClassEx(&mdiClass) );
    }
@@ -278,8 +328,6 @@ void Hexfile::init(HINSTANCE pInstance, HWND pWindow, char *pTitle, int pIcon)
       // functions properly until data() is called.
       SendMessage(HEX_child, HEXM_SETPOINTER, (WPARAM) &Dummy, 1);      
    }
-   
-   show(); // TODO: DELETE LATER
 }
 
 void Hexfile::data(void *pPointer, int pSize, int pOffset)
@@ -342,6 +390,15 @@ void Hexfile::show()
    W32_ASSERT( DrawMenuBar(VMLAB_window) );   
 }
 
+void Hexfile::readonly(bool pReadOnly)
+//******************************
+// Set the hex editor control to either read-only or read/write
+{
+   // TODO: Assert HEX_child window already exists; init was called()
+   
+   SendMessage(HEX_child, HEXM_SETREADONLY, pReadOnly, 0);
+}
+
 void Hexfile::hide(HWND pWindow)
 //******************************
 // This function is called from hide(void) and from the MDI window procedure
@@ -375,37 +432,18 @@ LRESULT CALLBACK Hexfile::MDI_proc(HWND pWindow, UINT pMessage, WPARAM pW, LPARA
          break;
       }
 
-      // The user is currently resizing window by dragging its corners. Since
+      // Returns the minimum size that the user can draw the window to. Since
       // the hex editor control doesn't draw properly at small sizes, a minimum
       // width has to be enforced here. For consistency, a minimum height is
       // also enforced which guarantees at least one row of data is visible.
-      case WM_SIZING:
+      case WM_GETMINMAXINFO:
       {
-         RECT *rect = (RECT *) pL;
-         
-         // Enfore minimum width otherwise
-         if(rect->right - rect->left < MIN_WIDTH) {
-            if(pW == WMSZ_LEFT || pW == WMSZ_TOPLEFT || pW == WMSZ_BOTTOMLEFT) {
-               rect->left = rect->right - MIN_WIDTH;
-            }
-            if(pW == WMSZ_RIGHT || pW == WMSZ_TOPRIGHT || pW == WMSZ_BOTTOMRIGHT) {
-               rect->right = rect->left + MIN_WIDTH;
-            }
-         }
-
-         // Enfore minimum width otherwise
-         if(rect->bottom - rect->top < MIN_HEIGHT) {
-            if(pW == WMSZ_TOP || pW == WMSZ_TOPLEFT || pW == WMSZ_TOPRIGHT) {
-               rect->top = rect->bottom - MIN_HEIGHT;
-            }
-            if(pW == WMSZ_BOTTOM || pW == WMSZ_BOTTOMLEFT || pW == WMSZ_BOTTOMRIGHT) {
-               rect->bottom = rect->top + MIN_HEIGHT;
-            }
-         }
-         
+         MINMAXINFO *info = (MINMAXINFO *) pL;
+         info->ptMinTrackSize.x = MIN_WIDTH;
+         info->ptMinTrackSize.y = MIN_HEIGHT;
          break;
       }
-         
+      
       // If the MDI window changed size then update hex editor size to
       // always fill entire client area of MDI window. Note that the first
       // WM_SIZE passed to MDI_proc is before the HEX_child window exists
@@ -419,15 +457,15 @@ LRESULT CALLBACK Hexfile::MDI_proc(HWND pWindow, UINT pMessage, WPARAM pW, LPARA
          break;
       }
       
-      // If MDI client is activated, make sure hex editor has keyboard focus
-      case WM_MDIACTIVATE:
+      // If MDI client has gained keyboard focus, then pass the focus to the
+      // child hex editor. Using WM_MDIACTIVATE is not good enough here
+      // because the latter message is not sent if only the parent MDI frame
+      // is activated, but the active MDI child has not changed.
+      case WM_SETFOCUS:
       {
-         // Only process if this is an activate and not a de-activate event
-         if(pWindow == (HWND) pL) {
-            HWND child = GetWindow(pWindow, GW_CHILD);
-            if(child) {
-               SendMessage(child, WM_SETFOCUS, 0, 0);
-            }
+         HWND child = GetWindow(pWindow, GW_CHILD);
+         if(child) {
+            SendMessage(child, WM_SETFOCUS, 0, 0);
          }
          break;
       }
@@ -466,7 +504,7 @@ void Hexfile::w32_error(char *pCode, char *pFile, int pLine)
       0,               // nSize (no minimum size specified for allocated buffer)
       NULL             // Arguments (no va_list arguments needed)
    );
-   
+  
    // Display message box if the message was succesfully retrieved or print a
    // generic error if no message could be found. The VMLAB_window could be
    // NULL but that won't cause any major problems here.

@@ -37,8 +37,21 @@
 #include "blackbox.h"
 #include "useravr.h"
 #include "eeprom.h"
+#include "hexfile.h"
 
-int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {return 1;} // is DLL
+// Saved HINSTANCE argument from DllEntryPoint() function. Needed to register
+// window classes and load resources from the DLL.
+HINSTANCE DLL_instance;
+
+int WINAPI DllEntryPoint(HINSTANCE pInstance, unsigned long, void*)
+//*************************
+// Entry point called when loading and unloading this DLL. Save the HINSTANCE
+// so it can be later passed to Hexfile::init() from On_window_init().
+{
+   DLL_instance = pInstance;
+   return 1;
+}
+
 // =============================================================================
 
 // EEPROM programming mode in EEPMx bits
@@ -51,7 +64,7 @@ const char *Mode_text[] = {
 // EEPROM write/erase times corresponding to each of the MODE_xxx constants
 double Delay_time[] = { 0, 3.4e-3, 1.8e-3, 1.8e-3, 0 };
 
-// Action codes used with REMIND_ME() -> On_remind_me() (must tbe even ints)
+// Action codes used with REMIND_ME() -> On_remind_me()
 enum { RMD_AUTOCLEAR_EEMPE, RMD_AUTOCLEAR_EEPE };
 
 // Involved ports. Keep same order as in .INI file "Port_map = ..." who
@@ -92,8 +105,10 @@ DECLARE_VAR
    UINT Version;        // Lowest byte of VERSION() that defines EECR
 
    bool Log;            // True if the "Log" checkbox button is checked
-   bool Delay;          // True if the "Simulate write/erase time" is checked
-   bool Save;           // True if the "Auto save" checkbox button is checked
+   bool Simtime;        // True if the "Simulate write/erase time" is checked
+   bool Autosave;       // True if the "Auto save" checkbox button is checked
+   
+   Hexfile Hex;         // Helper classs for GUI View/Load/Save/Erase
 END_VAR
 
 USE_WINDOW(WINDOW_USER_1); // Window to display registers, etc. See .RC file
@@ -193,7 +208,7 @@ void Write_EEPROM()
 // Called from On_register_write() to handle all the details of writing the
 // EEPROM memory depending on the current EEPM mode bits.
 {
-   // Tread UNKNOWN bits in EEDR as zero; they can't be saved to a HEX file
+   // Treat UNKNOWN bits in EEDR as zero; they can't be saved to a HEX file
    UCHAR data = REG(EEDR).d() & REG(EEDR).x();
    
    int addr = Decode_address();
@@ -238,13 +253,13 @@ void Write_EEPROM()
             break;         
       }
       
-      // If VAR(Delay) true then simulate the write/erase programming delay by
-      // setting EEPE=1 to indicate EEPROM is busy and scheduling REMIND_ME()
-      // to set EEPE=0 when the programming is finished. 
-      if(VAR(Delay)) {
+      // If VAR(Simtime) true then simulate the write/erase programming delay
+      // by setting EEPE=1 to indicate EEPROM is busy and scheduling
+      // REMIND_ME() to set EEPE=0 when the programming is finished. 
+      if(VAR(Simtime)) {
 
          // The +1 is needed in case get_field() returns -1 becaue unknown (X)
-         // bits are present. Unknown/reserved moves have a zero delay.
+         // bits are present. Unknown/reserved modes have a zero delay.
          double delay = Delay_time[REG(EECR).get_field(5,4) + 1];
          if(delay > 0) {
             REG(EECR).set_bit(1, 1);
@@ -275,6 +290,10 @@ const char *On_create()
    if(VAR(Memory) == NULL) {
       return "Could not allocate memory";
    }
+   
+   // Initialize memory to $FF for display purposes in hex editor before the
+   // simulation is started and actual data from .eep file is loaded.
+   memset(VAR(Memory), 0xFF, VAR(Size));
 
    // Initialize bitmasks for valid register bits based on decoded "Version"
    int version = VERSION();
@@ -307,6 +326,25 @@ void On_destroy()
    }
 }
 
+void On_window_init(HWND pHandle)
+//*******************************
+// Window initialization. Set initial check box state and setup Hexfile class.
+{
+   // The "Auto Save" checkbox is initially enabled
+   SendMessage(GET_HANDLE(GDT_AUTOSAVE), BM_SETCHECK, BST_CHECKED, 0);
+   VAR(Autosave) = true;
+   
+   // Initialize Hexfile support class. For some reason VMLAB adds a space
+   // in front of the title string for most child windows, so this peripheral
+   // maintains the same convention. Icon resource 13005 in VMLAB.EXE is the
+   // "E^2" icon used for the main EEPROM window.
+   VAR(Hex).init(DLL_instance, pHandle, " EEPROM Memory", 13005);
+   VAR(Hex).data(VAR(Memory), VAR(Size));
+   
+   // Hex editor remains read-only until simulation is started
+   VAR(Hex).readonly(true);
+}
+
 // TODO: Need On_window_init() to set initial checkboxes
 
 void On_simulation_begin()
@@ -316,10 +354,12 @@ void On_simulation_begin()
    // Ensure that EEPE=0 and no EEPROM erase/write is in progress. On_reset()
    // will initialize other bits and registers, but will preserve EEPE.
    REG(EECR) = 0;
-   
+
    // VLMAB internally loads data from project's .eep file at the beginning
    // of the simulation. Copy this data to the local memory buffer so that it
-   // can be used with an external hex editor control.
+   // can be used with an external hex editor control that expects an array
+   // of bytes rather than an array of WORD8.
+   // TODO: Use Autosave option
    for(int i = 0; i < VAR(Size); i++) {
       WORD8 *data = GET_MICRO_DATA(DATA_EEPROM, i);
       if(data == NULL) {
@@ -327,6 +367,12 @@ void On_simulation_begin()
       }
       VAR(Memory)[i] = data->d();
    }
+   
+   // TODO: Refresh should be done from On_update_tick()
+   VAR(Hex).refresh();
+
+   // The hex editor can now be used to make changes to EEPROM data
+   VAR(Hex).readonly(false);
 }
 
 void On_simulation_end()
@@ -348,6 +394,15 @@ void On_simulation_end()
       }
       *data = VAR(Memory)[i];
    }
+   
+   // Initialize memory back to $FF just as it was before simulation start
+   memset(VAR(Memory), 0xFF, VAR(Size));
+
+   // TODO: Refresh should be done from On_update_tick()
+   VAR(Hex).refresh();
+
+   // The hex editor is read only since On_simulation_begin() will reload data
+   VAR(Hex).readonly(true);  
 }
 
 void On_register_write(REGISTER_ID pId, WORD8 pData)
@@ -392,7 +447,6 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
       case EECR:
          mask = VAR(EECR_mask);
          Log_register_write(EECR, pData, mask);                  
-         pData = pData & mask;  // Mask unimplemented bits in EECR register
 
          // Bits 5,4 - EEPMx: EEPROM Programming Mode Bits
          //---------------------------------------------------------
@@ -401,7 +455,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
          int newMode = pData.get_field(5,4);
          if(newMode != REG(EECR).get_field(5,4)) {
             if(REG(EECR)[1] == 1) {
-               WARNING("Cannot change EEPM if EEPROM already busy (EEPE=1)",
+               WARNING("Cannot change EEPM while EEPROM busy (EEPE=1)",
                   CAT_EEPROM, WARN_PARAM_BUSY);
             } else {
                if(newMode == MODE_RESERVED) {
@@ -463,7 +517,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
                WARNING("Cannot read (EERE=1) and write (EEPE=1) EEPROM at the same time",
                   CAT_EEPROM, WARN_EEPROM_SIMULTANEOUS_RW);
             } else if(REG(EECR)[1] == 1) {
-               WARNING("Cannot read (EERE=1) EEPROM if already busy (EEPE=1)",
+               WARNING("Cannot read (EERE=1) while EEPROM busy (EEPE=1)",
                   CAT_EEPROM, WARN_EEPROM_SIMULTANEOUS_RW);
             } else {
                int addr = Decode_address();
@@ -557,6 +611,12 @@ void On_gadget_notify(GADGET pGadget, int pCode)
       VAR(Log) ^= 1;
    }
    if(pGadget == GDT_SIMTIME && pCode == BN_CLICKED) {
-      VAR(Delay) ^= 1;
+      VAR(Simtime) ^= 1;
+   }
+   if(pGadget == GDT_AUTOSAVE && pCode == BN_CLICKED) {
+      VAR(Autosave) ^= 1;
+   }
+   if(pGadget == GDT_VIEW && pCode == BN_CLICKED) {
+      VAR(Hex).show();
    }
 }
