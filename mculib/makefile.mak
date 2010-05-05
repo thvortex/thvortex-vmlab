@@ -30,7 +30,6 @@ timer2_168.dll:   timer2_168.res
 timerN_168.dll:   timerN_168.res
 wdog.dll:         wdog.res
 comp.dll:         comp.res
-eeprom.dll:       eeprom.res
 
 dummy168.res:     version.h
 timer0_168.res:   version.h timer0_168.h
@@ -39,6 +38,11 @@ timerN_168.res:   version.h timerN_168.h
 wdog.res:         version.h wdog.h
 comp.res:         version.h comp.h
 eeprom.res:       version.h eeprom.h
+
+# DLL files that link multiple .obj files require explicit rules
+eeprom.dll:       eeprom.obj hexfile.obj eeprom.res
+   ${LD} ${LDFLAGS} ${STARTUP} eeprom.obj hexfile.obj,$@, ,${LIBS}, ,$&.res
+   
          
 # Suffixes directive needed to make implicit rules work properly
 # Autodepend tracks include files in .obj; doesn't work for includes in .rc
