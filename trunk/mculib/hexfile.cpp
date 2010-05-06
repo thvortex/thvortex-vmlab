@@ -32,18 +32,62 @@
 
 #include <windows.h>
 #include <commctrl.h>
+#include <stdio.h>
 #pragma hdrstop
 #include "hexfile.h"
 
-// Window class name used only internally
+// =============================================================================
+// Global Constants and Macros
+// =============================================================================
+
+// Return the smaller of two values
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+// Size of temporary string buffer for generating filenames and error messages
+#define MAXBUF 256
+
+// Window class name used internally for the MDI child window which contains
+// the SHINEINHEX child window class
 #define CLASS_NAME "VMLAB Hexfile Editor"
 
-// These macros check the assertion that a Win32 API call returned succesfully.
-// If the call failed, then this macro will display a message box with detailed
-// error information.
-#define W32_ASSERT(cond) if((cond) == 0) \
-   { w32_error("W32_ASSERT( "#cond" );", __FILE__, __LINE__); }
+// String assigned to the lpstrFilter field of the OPENFILENAME structure. Used
+// by the "Open" and "Save" dialog boxes to display the pull-down list of
+// supported file types
+#define OPENFILENAME_FILTER \
+   "Intel HEX (*.eep;*.hex;)\0*.eep;*.hex\0" \
+   "Motorola S-Record (*.s19)\0*.s19\0" \
+   "Atmel Generic 16/8 (*.gen)\0*.gen\0" \
+   "Raw Binary (*.*)\0*.*\0"
 
+// Flags field used in OPENFILENAME structure for "Save" diaog box
+// OFN_NOCHANGEDIR: Don't change VMLAB's working directory
+// OFN_OVERWRITEPROMPT: Ask before overwriting existing file
+// OFN_PATHMUSTEXIST: Directory locations must already exist
+#define SAVEFILENAME_FLAGS \
+   (OFN_NOCHANGEDIR | OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST)      
+
+// Flags field used in OPENFILENAME structure for "Open" diaog box
+// OFN_NOCHANGEDIR: Don't change VMLAB's working directory
+// OFN_HIDEREADONLY: Hide "Read Only" checkbox in dialog
+// OFN_FILEMUSTEXIST: File names must already exist
+// OFN_PATHMUSTEXIST: Directory locations must already exist
+#define OPENFILENAME_FLAGS \
+   (OFN_NOCHANGEDIR | OFN_HIDEREADONLY | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST)
+
+// Error message displayed when loading memory image from larger EEPROM
+#define FILEERROR_TOOBIG \
+   "File uses higher addresses than supported by current EEPROM\n" \
+   "memory size. Data beyond the end of memory was ignored."
+
+// Error message displayed if any bad checksums were detected in HEX/SREC file
+#define FILEERROR_CHECKSUM \
+   "Checksum mismatches detected. Data in file may be corrupt."
+
+// Warning displayed if writing more than 65536 bytes to Atmel generic file
+#define FILEWARN_GENERICBIG \
+   "Atmel Generic file type only supports 16-bit addresses.\n" \
+   "Data beyond $FFFF memory address was not written to file."
+   
 // Initial size of MDI child window (not client area)
 enum { INIT_WIDTH = 629, INIT_HEIGHT = 305 };
 
@@ -76,6 +120,10 @@ enum {
    HEXM_SETREADONLY      = WM_USER+121,
 };
 
+// =============================================================================
+// Global Variables
+// =============================================================================
+
 // Global variables shared by all Hexfile objects; initialized by first init()
 HMODULE VMLAB_module = NULL; // Handle to VMLAB.EXE for icon loading
 HMODULE Library = NULL;      // Loaded ShineInHex.dll library
@@ -84,7 +132,17 @@ HWND MDI_client = NULL;      // MDI client window inside VMLAB window
 ATOM MDI_class = NULL;       // Window class of MDI_child window
 int Ref_count = 0;           // Reference count for library/class unloading
 
-void w32_error(char *pCode, char *pFile, int pLine)
+// =============================================================================
+// Error Handling and Reporting Functions
+// =============================================================================
+
+// This macro checks the assertion that a Win32 API call returned succesfully.
+// If the call failed, then this macro will display a message box with detailed
+// error information.
+#define W32_ASSERT(cond) if((cond) == 0) \
+   { W32_Error("W32_ASSERT( "#cond" );", __FILE__, __LINE__); }
+
+void W32_Error(char *pCode, char *pFile, int pLine)
 //*************************
 // This function is called if any Windows API call has failed. It uses the
 // GetLastError() API to retrieve an extended error code value, calls
@@ -123,7 +181,53 @@ void w32_error(char *pCode, char *pFile, int pLine)
    }
 }
 
-void hide(HWND pWindow)
+void File_Error(const char *pFile, UINT pType, const char *pFormat, ...)
+//*************************
+// Display a message box window with a printf() like error message related
+// to the EEPROM memory image file with path "pFile". Paramemter "pType" is
+// passed to MessageBox() to select the type of icon displayed.
+{
+   char strBuffer[MAXBUF];
+   va_list argList;
+
+   // The first line in message box is the file path.
+   int len = sprintf(strBuffer, "File: \"%s\"\n\n", pFile);
+   
+   // The second (and subsequent lines) are specified by user
+   va_start(argList, pFormat);
+   vsnprintf(strBuffer + len, MAXBUF - len, pFormat, argList);
+   va_end(argList);
+   
+   // Display the message box
+   MessageBox(
+      VMLAB_window,        // hWnd (parent window for message box)
+      strBuffer,           // lpText (text displayed inside message box)
+      "EEPROM File Error", // lpCaption (title string for message box window)
+      pType                // uType (type of icon displayed)
+   );
+}
+
+// =============================================================================
+// Internal Helper Functions
+// =============================================================================
+
+int Sum(int pValue)
+//********************
+// Return the sum obtained by adding the individual bytes of the pValue
+// integer together. Used for checksum calculations when reading and writing
+// memory image files.
+{
+   int sum = 0;   
+   
+   for(int i = 0; i < 4; i++) {
+      sum += pValue & 0xFF;
+      pValue >>= 8;
+   }   
+
+   return sum;
+}
+
+void Hide(HWND pWindow)
 //******************************
 // This function is called from Hexfile::hide(void) and from MDI_proc()
 // (on WM_SYSCOMMAND/SC_CLOSE) to perform the real work of hiding the MDI
@@ -140,6 +244,12 @@ void hide(HWND pWindow)
 
 LRESULT CALLBACK MDI_proc(HWND pWindow, UINT pMessage, WPARAM pW, LPARAM pL)
 //******************************
+// Custom window procedure for the MDI child window. Because MDI child
+// procedures have to call DefMDIChildProc() instead of DefWindowProc() for
+// unhandled messages, the SHINEINHEX window class cannot be created directly
+// as a child window of the global MDI frame. Instead, this custom MDI child
+// window acts as a container for the SHININHEX window and takes care of any
+// MDI specific message handling.
 {
    HWND child;
 
@@ -150,7 +260,7 @@ LRESULT CALLBACK MDI_proc(HWND pWindow, UINT pMessage, WPARAM pW, LPARAM pL)
       case WM_SYSCOMMAND:
       {
          if(pW == SC_CLOSE) {
-            hide(pWindow);
+            Hide(pWindow);
             return true;
          }
          break;
@@ -165,7 +275,7 @@ LRESULT CALLBACK MDI_proc(HWND pWindow, UINT pMessage, WPARAM pW, LPARAM pL)
          MINMAXINFO *info = (MINMAXINFO *) pL;
          info->ptMinTrackSize.x = MIN_WIDTH;
          info->ptMinTrackSize.y = MIN_HEIGHT;
-         break;
+         return true;
       }
       
       // If the MDI window changed size then update hex editor size to
@@ -184,7 +294,8 @@ LRESULT CALLBACK MDI_proc(HWND pWindow, UINT pMessage, WPARAM pW, LPARAM pL)
       // If MDI client has gained keyboard focus, then pass the focus to the
       // child hex editor. Using WM_MDIACTIVATE is not good enough here
       // because the latter message is not sent if only the parent MDI frame
-      // is activated, but the active MDI child has not changed.
+      // is activated, but the active MDI child within the MDI frame has not
+      // changed.
       case WM_SETFOCUS:
       {
          HWND child = GetWindow(pWindow, GW_CHILD);
@@ -201,6 +312,558 @@ LRESULT CALLBACK MDI_proc(HWND pWindow, UINT pMessage, WPARAM pW, LPARAM pL)
    // All other messages must be passed to default MDI child window procedure
    return DefMDIChildProc(pWindow, pMessage, pW, pL);
 }
+
+// =============================================================================
+// Helper Classes
+// =============================================================================
+
+class File
+//*********
+// Wrapper class around the stdio fopen(), fprintf(), fwrite(), etc. series of
+// functions. All member functions take care of performing runtime checking for
+// any possible I/O errors. If an error occurs, call File_Error() to notify the
+// user and the File::Error exception is thrown. Using exceptions for error
+// handling makes the mainline code simpler since it doesn't have to check
+// the return code of each operation to determine success or failure. However,
+// no exception is thrown when closing the file, because it's not safe to
+// do so from the destructor. Based on the pEofWanted constructor argument,
+// input routines like scanf() and read() will either return FALSE or throw
+// an exception.
+// TODO: The C++ iofstream could be used in place of this custom File class
+// since it too can throw exceptions on I/O, parse, and EOF errors.
+{
+   private:
+      const char *Name;  // File name passed to fopen(); for error msgs
+      bool EOF_Wanted;   // True if EOF returns FALSE instead of throwing
+      FILE *File;        // The open file pointer returned by fopen()
+
+      void error(const char *pError, bool pThrow = true, UINT pType = MB_ICONSTOP);
+      
+   public:
+      class Error {};    // Thrown if any I/O errors occur in File class
+
+      File(const char *pName, const char *pMode, bool pEofWanted = false);      
+      ~File();
+      
+      void printf(const char *pFormat, ...);
+      bool scanf(int pExpectedCount, const char *pFormat, ...);
+      bool read(char *pData, int pLength);
+      void write(const char *pData, int pLength);
+};
+
+void File::error(const char *pError, bool pThrow, UINT pType)
+//********************************
+// Used by internal functions to display errors/warnings as a pop-up dialog
+{
+   // If error() is called due to end-of-file or a parsing error
+   // then errno == 0 since no actual I/O error has occurred
+   if(errno) {
+      File_Error(Name, pType, "%s: %s", pError, strerror(errno));
+   } else {
+      File_Error(Name, pType, "%s", pError);
+   }
+
+   if(pThrow) {
+      throw Error();
+   }
+}
+
+File::File(const char *pName, const char *pMode, bool pEofWanted) :
+   File(NULL), Name(pName), EOF_Wanted(pEofWanted)
+//********************************
+// Constructor to open "pName" file using "pMode" for access. If
+// the "pEofWanted" argument is true, then the scanf() and read()
+// functions return false when an EOF is reached instead of throwing
+// an exception.
+{
+   File = ::fopen(pName, pMode);
+   if(!File) {
+      error("Cannot open file");
+   }
+}
+
+File::~File()
+//********************************
+// Destructor to close the file. If an error occurs while closing (e.g.
+// disk full while flushing the stdio buffers), an exception is NOT
+// thrown since doing so while C++ is handling another exception and
+// unwinding the stack is not supported in C++ (process terminates).
+{
+   if(File && fclose(File)) {
+      error("Error while closing file", false);
+   }
+}
+
+bool File::scanf(int pExpectedCount, const char *pFormat, ...)
+//********************
+// Wrapper around the fvscanf() function
+{
+   va_list argList;
+
+   va_start(argList, pFormat);
+   int actualCount = vfscanf(File, pFormat, argList);
+   va_end(argList);
+   
+   if(actualCount != pExpectedCount) {
+      if(ferror(File)) {
+         error("Cannot read from file");
+      } else if(feof(File)) {
+         if(EOF_Wanted) {
+            return false;
+         } else {
+            error("Unexpected end-of-file", true, MB_ICONWARNING);
+         }
+      } else {
+         error("Unrecognized data in file; unknown file type");
+      }            
+   }
+   
+   return true;
+}
+
+void File::printf(const char *pFormat, ...)
+//********************
+// Wrapper around the vfprintf() function
+{
+   va_list argList;
+
+   va_start(argList, pFormat);
+   vfprintf(File, pFormat, argList);
+   va_end(argList);
+
+   if(ferror(File)) {
+      error("Cannot write to file");
+   }
+}
+
+bool File::read(char *pData, int pLength)
+//********************
+// Wrapper around the fread() function
+{
+   int actualCount = fread(pData, 1, pLength, File);
+
+   if(actualCount != pLength) {
+      if(ferror(File)) {
+         error("Cannot read from file");
+      } else if(feof(File)) {
+         if(EOF_Wanted) {
+            return false;
+         } else {
+            error("Unexpected end-of-file", true, MB_ICONWARNING);
+         }
+      } else {
+         error("Internal error; unknown fread() error");
+      }            
+   }
+   
+   return true;
+}
+
+void File::write(const char *pData, int pLength)
+//********************
+// Wrapper around the fwrite() function
+{
+   fwrite(pData, 1, pLength, File);
+
+   if(ferror(File)) {
+      error("Cannot write to file");
+   }
+}
+
+// =============================================================================
+// Memory image saving functions
+// =============================================================================
+
+void Write_BIN(UCHAR *pBuffer, const int pSize, const char *pName)
+//********************
+// Write full EEPROM memory contents to a raw binary file. The file will be
+// the same size as the EEPROM memory.
+{
+   // Open file for writing in binary mode. The "b" specifier is needed so the
+   // stdio library does not try to translate "\n" characters written to the
+   // file into the "\r\n" line endings used by Windows.
+   File file(pName, "wb");
+   file.write(pBuffer, pSize);
+}
+
+void Write_HEX(UCHAR *pBuffer, const int pSize, const char *pName)
+//********************
+// Write EEPROM memory contents to an Intel HEX file. Sections of memory set
+// to $FF are omitted from the file since this is the default value. EEPROMs
+// larger than 16-bits will use the "Extended Linear Address" record.
+{
+   // The upper 16 bits of the last EEPROM address written to file. Used to
+   // detect when the "Extened Segment Address" should be written to file.
+   int segment = 0;
+
+   // Open file for writing in text mode. The "t" specifier is needed for the
+   // stdio library to translate "\n" characters written to the file into the
+   // "\r\n" used by Windows.
+   File file(pName, "wt");
+
+   // Write or skip over EEPROM contents one row (16 bytes) at a time.
+   for(int addr = 0; addr < pSize; addr += 0x10) {
+      UCHAR checksum;
+      int i;
+   
+      // If the entire row contains $FF bytes then don't write it to file
+      for(i = addr; i < addr + 0x10; i++) {
+         if(pBuffer[i] != 0xFF) break;
+      }
+      if(i == addr + 0x10) continue;
+
+      // If the current "addr" has crossed into the next 16-bit boundry,
+      // then write an "Extended Linear Address" record. The checksum
+      // below is calculated as: 02 (for record byte count) + 04 (record
+      // type) + the sum of the individual "segment" bytes. Note that
+      // the two's complement used for the checksum is the same as negation.
+      if(addr >> 0x10 != segment) {         
+         segment = addr >> 0x10;
+         checksum = -(Sum(segment) + 0x06);
+         file.printf(":02000004%04X%02X\n", segment, checksum);
+      }
+
+      // Write beginning of "Data Record" and lower 16-bits of current "addr"
+      checksum = 0x10 + Sum(addr & 0xFFFF);
+      file.printf(":10%04X00", addr & 0xFFFF);
+      
+      // Write all bytes in the row while also updating the checksum
+      for(i = addr; i < addr + 0x10; i++) {
+         checksum += pBuffer[i];
+         file.printf("%02X", pBuffer[i]);
+      }
+      
+      // Finish the record by printing the checksum at the end
+      checksum = -checksum;
+      file.printf("%02X\n", checksum);
+   }
+   
+   // Write "End of File" record
+   file.printf(":00000001FF\n");
+}
+
+void Write_SREC(UCHAR *pBuffer, const int pSize, const char *pName)
+//********************
+// Write EEPROM memory contents to a Motorola S-Record File. Sections of
+// memory set to $FF are omitted from the file since this is the default
+// value. EEPROMs larger than 16-bits will use the larger address "S2"
+// record type.
+{
+   // Open file for writing in text mode. The "t" specifier is needed for the
+   // stdio library to translate "\n" characters written to the file into the
+   // "\r\n" used by Windows.
+   File file(pName, "wt");
+
+   // Write or skip over EEPROM contents one row (16 bytes) at a time.
+   for(int addr = 0; addr < pSize; addr += 0x10) {
+      UCHAR checksum;
+      int i;
+   
+      // If the entire row contains $FF bytes then don't write it to file
+      for(i = addr; i < addr + 0x10; i++) {
+         if(pBuffer[i] != 0xFF) break;
+      }
+      if(i == addr + 0x10) continue;
+
+      // Based on the current "addr" size, write beginning of either an "S1"
+      // or "S2" record type.
+      if(addr <= 0xFFFF) {
+         checksum = 0x13 + Sum(addr);
+         file.printf("S113%04X", addr);
+      } else {
+         checksum = 0x14 + Sum(addr);
+         file.printf("S214%06X", addr);
+      }
+      
+      // Write all bytes in the row while also updating the checksum
+      for(i = addr; i < addr + 0x10; i++) {
+         checksum += pBuffer[i];
+         file.printf("%02X", pBuffer[i]);
+      }
+      
+      // Finish the record by printing the checksum at the end
+      checksum = ~checksum;
+      file.printf("%02X\n", checksum);
+   }
+      
+   // Write "End of File" record
+   file.printf("S9030000FC\n");   
+}
+
+void Write_GEN(UCHAR *pBuffer, const int pSize, const char *pName)
+//********************
+// Write EEPROM memory contents to an Atmel Generic file in 16/8 format. Only
+// the first 65536 bytes of EEPROM memory can be saved when using this format.
+{
+   int addr;
+
+   // Open file for writing in text mode. The "t" specifier is needed for the
+   // stdio library to translate "\n" characters written to the file into the
+   // "\r\n" used by Windows.
+   File file(pName, "wt");
+
+   // Use 16/8 format for smaller EEPROMs; only write non-$FF bytes
+   int maxSize = MIN(pSize, 0x10000);
+   for(addr = 0; addr < maxSize; addr++) {
+      if(pBuffer[addr] != 0xFF) {
+         file.printf("%04X:%02X\n", addr, pBuffer[addr]);
+      }
+   }
+
+   // Check for non $FF data at higher addresses and issue warning
+   for(; addr < pSize; addr++) {
+      if(pBuffer[addr] != 0xFF) {
+         File_Error(pName, MB_ICONWARNING, FILEWARN_GENERICBIG);
+         break;
+      }
+   }
+}
+
+// =============================================================================
+// Memory image loading functions
+// =============================================================================
+
+void Read_BIN(UCHAR *pBuffer, const int pSize, const char *pName)
+//********************
+// Read full EEPROM memory contents from a raw binary file. A warning if shown
+// if the file is larger than the EEPROM memory size, and the additional data
+// at the end of the file is ignored. Files smaller than the EEPROM memory
+// simply initialize a smaller portion of memory
+{
+   // Open file for reading in binary mode. The "b" specifier is needed so the
+   // stdio library does not try to translate "\r\n" line edings used by
+   // Windows into the "\n" specified by the C standard. Also request that
+   // end-of-file should be returned by file.read() instead of throwing an
+   // exception.
+   File file(pName, "rb", true);
+
+   // Read up to the smaller size of available memory or file size
+   file.read(pBuffer, pSize);
+   
+   // Try readning one more byte to check if file is larger than memory. If
+   // read succeesds than issue a warning because additional data is ignored.
+   char dummy;
+   if(file.read(&dummy, 1)) {
+      File_Error(pName, MB_ICONWARNING, FILEERROR_TOOBIG);
+   }   
+}
+
+void Read_HEX(UCHAR *pBuffer, const int pSize, const char *pName)
+//********************
+// Read EEPROM memory contents from an Intel HEX file.
+{
+   bool warnAddress = false;  // File contain addresses too big for EEPROM?
+   bool warnChecksum = false; // File contains checksum mismatches?
+   bool done = false;         // True when "End of File" record read
+
+   // The upper 16 bits of the last EEPROM address written to file. Updated
+   // by "02" and "04" record types.
+   int segment = 0;
+   
+   // According the official Intel HEX file standard, the memory address is
+   // supposed to wrap around within a 64KB block when reading data. If
+   // an Extended Linear Address Record is read, then the address will no
+   // longer wrap; reading an Extended Segment Address Record will re-enable
+   // the wrapping.
+   int mask = 0xFFFF;
+   
+   // Open file for reading in text mode. The "t" specifier is needed for the
+   // stdio library to translate the "\r\n" line edings used by Windows into the
+   // "\n" specified by the C standard.
+   File file(pName, "rt");
+
+   // Keep reading records until "End of File" record terminates the loop
+   while(!done) {
+      int count, addr, type;  // Fixed size field in all records
+      char data[256];         // Variable size data field in some records
+      UCHAR checksum;         // Checksum computed on the fly
+      
+      // Read entire record into memory, including variable sized data, and
+      // also compute a checksum on the fly which will be checked later
+      file.scanf(3, " :%2X%4X%2X", &count, &addr, &type);
+      checksum = count + Sum(addr) + type;
+      for(int i = 0; i < count; i++) {
+         int temp;
+         file.scanf(1, "%2X", &temp);
+         data[i] = temp;
+         checksum += temp;
+      }
+      
+      // Decode record type
+      switch(type) {
+      
+         // Data record; copy data into EEPROM memory. Ignore data at higher
+         // addresses than supported by EEPROM.
+         case 00:
+            for(int i = 0; i < count; i++, addr++) {
+               int fullAddr = segment + (addr & mask);
+               if(fullAddr < pSize) {
+                  pBuffer[fullAddr] = data[i];
+               } else {
+                  warnAddress = true;
+               }
+            }
+            break;
+         
+         // End of File record; finish reading file
+         case 01:
+            done = true;
+            break;
+            
+         // Extended Segment Address Record; update segment address
+         // Assume big-endian address format in the data
+         case 02:
+            segment = ((data[0] << 8) | data[1]) << 4;
+            mask = 0xFFFF;
+            break;
+
+         // Extended Linear Address Record; update segment address
+         // Assume big-endian address format in the data
+         case 04:
+            segment = ((data[0] << 8) | data[1]) << 16;
+            mask = 0xFFFFFFFF;
+            break;
+         
+         // Ignore all other record types
+         default:
+            break;
+      }
+      
+      // Read checksum from file and compare with locally computed checksum
+      UCHAR fileChecksum;
+      file.scanf(1, "%2X", &fileChecksum);
+      checksum = -checksum;
+      if(fileChecksum != checksum) {
+         warnChecksum = true;
+      }
+   }
+   
+   // Display any warnings about the file
+   if(warnAddress) {
+      File_Error(pName, MB_ICONWARNING, FILEERROR_TOOBIG);
+   }
+   if(warnChecksum) {
+      File_Error(pName, MB_ICONWARNING, FILEERROR_CHECKSUM);
+   }
+}
+
+void Read_SREC(UCHAR *pBuffer, const int pSize, const char *pName)
+//********************
+// Read EEPROM memory contents from an Intel HEX file.
+{
+   bool warnAddress = false;  // File contain addresses too big for EEPROM?
+   bool warnChecksum = false; // File contains checksum mismatches?
+   bool done = false;         // True when "End of File" record read
+
+   // Open file for reading in text mode. The "t" specifier is needed for the
+   // stdio library to translate the "\r\n" line edings used by Windows into the
+   // "\n" specified by the C standard.
+   File file(pName, "rt");
+
+   // Keep reading records until "End of File" record terminates the loop
+   while(!done) {
+      int count, type; // Fixed size field in all records
+      char data[256];  // Variable size data field in some records
+      UCHAR checksum;  // Checksum computed on the fly
+      
+      // Read record type and length and compute checksum on the fly
+      file.scanf(2, " S%1X%2X", &type, &count);
+      checksum = count;
+      
+      // Read variable sized address field depending on data sequuence record
+      // type. Other record types simply ignore the address.
+      int addr = 0;
+      switch(type) {
+         case 1: file.scanf(1, "%4X", &addr); count -= 2; break;
+         case 2: file.scanf(1, "%6X", &addr); count -= 3; break;
+         case 3: file.scanf(1, "%8X", &addr); count -= 4; break;
+      }
+      checksum += Sum(addr);
+
+      // Read variable sized data portion, excluding checksum byte
+      for(int i = 0; i < count - 1; i++) {
+         int temp;
+         file.scanf(1, "%2X", &temp);
+         data[i] = temp;
+         checksum += temp;
+      }
+      
+      // Decode record type
+      switch(type) {
+      
+         // Data record; copy data into EEPROM memory. Ignore data at higher
+         // addresses than supported by EEPROM.
+         case 1: case 2: case 3:
+            for(int i = 0; i < count - 1; i++, addr++) {
+               if(addr < pSize) {
+                  pBuffer[addr] = data[i];
+               } else {
+                  warnAddress = true;
+               }
+            }
+            break;
+         
+         // End of File record; finish reading file
+         case 7: case 8: case 9:
+            done = true;
+            break;
+         
+         // Ignore all other record types
+         default:
+            break;
+      }
+      
+      // Read checksum from file and compare with locally computed checksum
+      UCHAR fileChecksum;
+      file.scanf(1, "%2X", &fileChecksum);
+      checksum = ~checksum;
+      if(fileChecksum != checksum) {
+         warnChecksum = true;
+      }
+   }
+   
+   // Display any warnings about the file
+   if(warnAddress) {
+      File_Error(pName, MB_ICONWARNING, FILEERROR_TOOBIG);
+   }
+   if(warnChecksum) {
+      File_Error(pName, MB_ICONWARNING, FILEERROR_CHECKSUM);
+   }
+}
+
+void Read_GEN(UCHAR *pBuffer, const int pSize, const char *pName)
+//********************
+// Read EEPROM memory contents from an Atmel Generic file in 16/8 format.
+{
+   bool warnAddress = false;  // File contain addresses too big for EEPROM?
+   
+   // Open file for reading in text mode. The "t" specifier is needed for the
+   // stdio library to translate the "\r\n" line edings used by Windows into the
+   // "\n" specified by the C standard. Also request that end-of-file should be
+   // returned by file.scanf() instead of throwing an exception.
+   File file(pName, "rt", true);
+
+   // Atmel generic has no explicit end of data marker so continue reading
+   // until the end-of-file is reached. Ignore data at higher addresses than
+   // supported by current EEPROM memory size.
+   int addr, data;
+   while(file.scanf(2, " %4X:%2X", &addr, &data)) {   
+      if(addr < pSize) {
+         pBuffer[addr] = data;
+      } else {
+         warnAddress = true;
+      }
+   }
+   
+   // Display any warning about the file
+   if(warnAddress) {
+      File_Error(pName, MB_ICONWARNING, FILEERROR_TOOBIG);
+   }
+}
+
+// =============================================================================
+// Hexfile class member functions
+// =============================================================================
 
 Hexfile::Hexfile()
 //******************************
@@ -404,6 +1067,9 @@ void Hexfile::init(HINSTANCE pInstance, HWND pHandle, char *pTitle, int pIcon)
 void Hexfile::data(void *pPointer, int pSize, int pOffset)
 //******************************
 {
+   // TODO: assert that pSize is power of 2 and larger than 16 (needed by
+   // the file read/write functions)
+
    // TODO: assert that HEX_child should always exist
 
    // Update local variables used by load() and save()
@@ -432,7 +1098,7 @@ void Hexfile::hide()
 {
    // TODO: Assert MDI_child window already exists; init() was called
 
-   ::hide(MDI_child);
+   Hide(MDI_child);
 }
 
 void Hexfile::refresh()
@@ -464,9 +1130,20 @@ void Hexfile::show()
 
 void Hexfile::readonly(bool pReadOnly)
 //******************************
-// Set the hex editor control to either read-only or read/write
+// Set the hex editor control to either read-only or read/write and update
+// hex editor text color to provide visual feedback of current editing mode.
 {
    // TODO: Assert HEX_child window already exists; init was called()
+
+   // If the control is set to read-only, text in the editor is drawn in gray
+   // over a white background. If set to read-write, text is draw in black.
+   COLORREF txtColFg = GetSysColor(pReadOnly ? COLOR_GRAYTEXT : COLOR_WINDOWTEXT);
+   COLORREF txtColBg = GetSysColor(COLOR_WINDOW);
    
+   SendMessage(HEX_child, HEXM_SETVIEW2COL, txtColBg, txtColFg);
+   SendMessage(HEX_child, HEXM_SETVIEW3COL, txtColBg, txtColFg);   
    SendMessage(HEX_child, HEXM_SETREADONLY, pReadOnly, 0);
-}
+
+   // Force a redraw of the hex editor window to show updated colors
+   InvalidateRect(HEX_child, NULL, true);
+}   
