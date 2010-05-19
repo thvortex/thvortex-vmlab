@@ -54,26 +54,15 @@
 // by the "Open" and "Save" dialog boxes to display the pull-down list of
 // supported file types
 #define OPENFILENAME_FILTER \
-   "Intel HEX (*.eep;*.hex;)\0*.eep;*.hex\0" \
+   "Intel HEX (*.eep; *.hex)\0*.eep;*.hex\0" \
    "Motorola S-Record (*.s19)\0*.s19\0" \
    "Atmel Generic 16/8 (*.gen)\0*.gen\0" \
    "Raw Binary (*.*)\0*.*\0"
 
-// Flags field used in OPENFILENAME structure for "Save" diaog box
-// OFN_NOCHANGEDIR: Don't change VMLAB's working directory
-// OFN_OVERWRITEPROMPT: Ask before overwriting existing file
-// OFN_PATHMUSTEXIST: Directory locations must already exist
-#define SAVEFILENAME_FLAGS \
-   (OFN_NOCHANGEDIR | OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST)      
-
-// Flags field used in OPENFILENAME structure for "Open" diaog box
-// OFN_NOCHANGEDIR: Don't change VMLAB's working directory
-// OFN_HIDEREADONLY: Hide "Read Only" checkbox in dialog
-// OFN_FILEMUSTEXIST: File names must already exist
-// OFN_PATHMUSTEXIST: Directory locations must already exist
-#define OPENFILENAME_FLAGS \
-   (OFN_NOCHANGEDIR | OFN_HIDEREADONLY | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST)
-
+// File types corresponding to the OPENFILENAME_FILTER string. These are
+// returned by the GetOpenFileName() and GetSaveFileName() functions.
+enum { FT_HEX = 1, FT_SREC, FT_GEN, FT_BIN };
+   
 // Error message displayed when loading memory image from larger EEPROM
 #define FILEERROR_TOOBIG \
    "File uses higher addresses than supported by current EEPROM\n" \
@@ -87,6 +76,11 @@
 #define FILEWARN_GENERICBIG \
    "Atmel Generic file type only supports 16-bit addresses.\n" \
    "Data beyond $FFFF memory address was not written to file."
+   
+// Confirmation question displayed when the erase() function is called
+#define CONFIRM_ERASE \
+   "Are you sure you want to erase\n" \
+   "entire EEPROM memory to $FF?"
    
 // Initial size of MDI child window (not client area)
 enum { INIT_WIDTH = 629, INIT_HEIGHT = 305 };
@@ -151,7 +145,7 @@ void W32_Error(char *pCode, char *pFile, int pLine)
 // The PRINT() interface function cannot be used here because this may be
 // called from the DLL static constructor when VMLAB is not ready yet to handle
 // any interface function calls from the components.
-// TODO: Use second FormatMessage() to display pFile and pLine
+// TODO: Use second FormatMessage() pr sprintf() to display pFile and pLine
 {
    DWORD errorValue, bytesWritten;
    char *msgPtr = NULL;
@@ -232,6 +226,7 @@ void Hide(HWND pWindow)
 // This function is called from Hexfile::hide(void) and from MDI_proc()
 // (on WM_SYSCOMMAND/SC_CLOSE) to perform the real work of hiding the MDI
 // child window.
+// TODO: Merge into single Show(HWND, bool) and ::show(bool)
 {
    // Hide this MDI child window, active the next MDI child, and request that
    // the MDI client refreshes the "Windows" menu in the top-most VMALB window
@@ -1066,6 +1061,12 @@ void Hexfile::init(HINSTANCE pInstance, HWND pHandle, char *pTitle, int pIcon)
 
 void Hexfile::data(void *pPointer, int pSize, int pOffset)
 //******************************
+// Set or change the raw data (and its size in bytes) that is displayed
+// in the hex editor. Any changes made interactively by the user using
+// the editor will be immediately written back to the buffer specified
+// by "pPointer". The "pOffset" is typically zero but can specify any
+// arbitrary address to display in the editor for the first byte of the
+// buffer.
 {
    // TODO: assert that pSize is power of 2 and larger than 16 (needed by
    // the file read/write functions)
@@ -1073,7 +1074,7 @@ void Hexfile::data(void *pPointer, int pSize, int pOffset)
    // TODO: assert that HEX_child should always exist
 
    // Update local variables used by load() and save()
-   Pointer = pPointer;
+   Pointer = (UCHAR*) pPointer;
    Size = pSize;
    Offset = pOffset;
    
@@ -1147,3 +1148,116 @@ void Hexfile::readonly(bool pReadOnly)
    // Force a redraw of the hex editor window to show updated colors
    InvalidateRect(HEX_child, NULL, true);
 }   
+
+void Hexfile::load()
+//******************************
+// Display common "Open" dialog box so the user can select a memory image file
+// and load memory contents from file. The hex editor is immediately refreshed
+// to show the new data.
+{
+   // Structure and pathname buffer for use with common dialog routines.
+   char pathBuffer[MAX_PATH];
+   OPENFILENAME dlg;
+   
+   // Initialize OPENFILENAME structure for use with "Open" common dialog box.
+   // All unused, reserved, and output fields are initialized to zero.
+   memset(&dlg, 0, sizeof(OPENFILENAME));  // Initialize struct to zero
+   pathBuffer[0] = '\0';                   // No initial filename in dialog
+   dlg.lStructSize = sizeof(OPENFILENAME); // Structure size required
+   dlg.hwndOwner = VMLAB_window;           // Owner window of Open/Save dialog
+   dlg.lpstrFilter = OPENFILENAME_FILTER;  // Supported file types
+   dlg.lpstrFile = pathBuffer;             // Buffer to receive user's filename
+   dlg.nMaxFile = MAX_PATH;                // Total size of lpstrFile buffer
+   dlg.lpstrDefExt = "eep";                // Default filename extension
+   dlg.lpstrTitle = "Load EEPROM File";    // Dialog title
+   dlg.Flags =                             // Option flags
+      OFN_NOCHANGEDIR |              // Don't change VMLAB's working directory
+      OFN_HIDEREADONLY |             // Hide "Read Only" checkbox in dialog
+      OFN_FILEMUSTEXIST |            // File names must already exist
+      OFN_PATHMUSTEXIST;             // Directory locations must already exist
+
+   // If the user clicks "OK" button, attempt loading from the file
+   if(GetOpenFileName(&dlg)) {    
+      // Initialize EEPROM contents to fully erased (0xFF) state
+      // before loading data so that any unspecified "holes" in the
+      // file's address space end up as $FF
+      memset(Pointer, 0xFF, Size);
+
+      // If an I/O error occurs, the File class will throw an exception
+      // to abort the operation. The EEPROM memory may be partially
+      // initialized if only part of the input file was read.
+      try {
+         switch(dlg.nFilterIndex) {
+            case FT_HEX:  Read_HEX(Pointer, Size, pathBuffer); break;
+            case FT_SREC: Read_SREC(Pointer, Size, pathBuffer); break;
+            case FT_GEN:  Read_GEN(Pointer, Size, pathBuffer); break;
+            case FT_BIN:  Read_BIN(Pointer, Size, pathBuffer); break;
+         }
+         
+         // Force a redraw of the hex editor window to show new data
+         refresh();
+      }
+      catch (File::Error) {}
+   }
+}
+
+void Hexfile::save()
+//******************************
+// Display common "Save" dialog box so the user can select a memory image file
+// and write memory contents to file.
+{
+   // Structure and pathname buffer for use with common dialog routines.
+   char pathBuffer[MAX_PATH];
+   OPENFILENAME dlg;
+   
+   // Initialize OPENFILENAME structure for use with "Open" common dialog box.
+   // All unused, reserved, and output fields are initialized to zero.
+   memset(&dlg, 0, sizeof(OPENFILENAME));  // Initialize struct to zero
+   pathBuffer[0] = '\0';                   // No initial filename in dialog
+   dlg.lStructSize = sizeof(OPENFILENAME); // Structure size required
+   dlg.hwndOwner = VMLAB_window;           // Owner window of Open/Save dialog
+   dlg.lpstrFilter = OPENFILENAME_FILTER;  // Supported file types
+   dlg.lpstrFile = pathBuffer;             // Buffer to receive user's filename
+   dlg.nMaxFile = MAX_PATH;                // Total size of lpstrFile buffer
+   dlg.lpstrDefExt = "eep";                // Default filename extension
+   dlg.lpstrTitle = "Save EEPROM File";    // Dialog title
+   dlg.Flags =                             // Option flags
+      OFN_NOCHANGEDIR |              // Don't change VMLAB's working directory
+      OFN_OVERWRITEPROMPT |          // Ask before overwriting existing file
+      OFN_PATHMUSTEXIST;             // Directory locations must already exist
+
+   // If the user clicks "OK" button, attempt saving to the file      
+   if(GetSaveFileName(&dlg)) {         
+      // If an I/O error occurs, the File class will throw an exception
+      // to abort the operation. The output file will have been partially
+      // written at this point.
+      try {
+         switch(dlg.nFilterIndex) {
+            case FT_HEX:  Write_HEX(Pointer, Size, pathBuffer); break;
+            case FT_SREC: Write_SREC(Pointer, Size, pathBuffer); break;
+            case FT_GEN:  Write_GEN(Pointer, Size, pathBuffer); break;
+            case FT_BIN:  Write_BIN(Pointer, Size, pathBuffer); break;
+         }
+      }
+      catch (File::Error) {}
+   }      
+}
+
+void Hexfile::erase()
+//******************************
+// Display a message box to the user asking for confirmation. If user clicks
+// "Yes" button, then erase entire memory contents to $FF and immediately
+// refresh the hex editor to show the changed data.
+{
+   int rc = MessageBox(
+      VMLAB_window,             // hWnd (owning window of message box)
+      CONFIRM_ERASE,            // lpText (test shown in body of window)
+      "Confirm EEPROM Erase",   // lpCaption (text shown in the title bar)
+      MB_YESNO | MB_ICONWARNING // uType (Yes/No buttons and exclamation icon)
+   );
+   
+   if(rc == IDYES) {
+      memset(Pointer, 0xFF, Size);
+      refresh();
+   }
+}

@@ -29,3 +29,5 @@
 #define GDT_LOG        GADGET9
 #define GDT_SIMTIME    GADGET10
 #define GDT_AUTOSAVE   GADGET11
+#define GDT_MODE       GADGET12
+#define GDT_STATUS     GADGET13
