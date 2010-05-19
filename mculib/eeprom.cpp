@@ -54,11 +54,15 @@ int WINAPI DllEntryPoint(HINSTANCE pInstance, unsigned long, void*)
 
 // =============================================================================
 
-// EEPROM programming mode in EEPMx bits
-// NOTE: WORD8::get_field() returns -1 for unknown bits
+// EEPROM programming mode in EEPMx bits and EEPE status bit. Note that
+// WORD8::get_field() returns -1 for unknown bits while WORD8::get_bit()
+// (or the [] operator) returns 2 for unknown bits.
 enum { MODE_UNKNOWN = -1, MODE_ATOMIC, MODE_ERASE, MODE_WRITE, MODE_RESERVED };
 const char *Mode_text[] = {
    "?", "Erase / Write", "Erase", "Write", "Reserved"
+};
+const char *Status_text[] = {
+   "Idle", "Busy", "?"
 };
 
 // EEPROM write/erase times corresponding to each of the MODE_xxx constants
@@ -107,6 +111,7 @@ DECLARE_VAR
    bool Log;            // True if the "Log" checkbox button is checked
    bool Simtime;        // True if the "Simulate write/erase time" is checked
    bool Autosave;       // True if the "Auto save" checkbox button is checked
+   bool Dirty;          // True if mode bits changed or EEPROM memory updated
    
    Hexfile Hex;         // Helper classs for GUI View/Load/Save/Erase
 END_VAR
@@ -230,11 +235,13 @@ void Write_EEPROM()
          case MODE_ATOMIC:
             Log("Write EEPROM[$%04X]=$%02X", addr, data);
             VAR(Memory)[addr] = data;
+            VAR(Dirty) = true;
             break;
          
          case MODE_ERASE:
             Log("Erase EEPROM[$%04X]", addr);
             VAR(Memory)[addr] = 0xFF;
+            VAR(Dirty) = true;
             break;
                   
          case MODE_WRITE:
@@ -250,6 +257,7 @@ void Write_EEPROM()
             data &= VAR(Memory)[addr];
             Log("Write EEPROM[$%04X]=$%02X", addr, data);
             VAR(Memory)[addr] = data;            
+            VAR(Dirty) = true;
             break;         
       }
       
@@ -368,11 +376,15 @@ void On_simulation_begin()
       VAR(Memory)[i] = data->d();
    }
    
-   // TODO: Refresh should be done from On_update_tick()
-   VAR(Hex).refresh();
+   // Force the GUI to display new EEPROM contents and mode bits
+   VAR(Dirty) = true;
 
-   // The hex editor can now be used to make changes to EEPROM data
+   // The hex editor can now be used to make changes to EEPROM data and the
+   // Load/Save/Erase buttons are enabled.
    VAR(Hex).readonly(false);
+   EnableWindow(GET_HANDLE(GDT_LOAD), true);
+   EnableWindow(GET_HANDLE(GDT_SAVE), true);
+   EnableWindow(GET_HANDLE(GDT_ERASE), true);
 }
 
 void On_simulation_end()
@@ -398,11 +410,16 @@ void On_simulation_end()
    // Initialize memory back to $FF just as it was before simulation start
    memset(VAR(Memory), 0xFF, VAR(Size));
 
-   // TODO: Refresh should be done from On_update_tick()
-   VAR(Hex).refresh();
+   // Force hex editor to show erased $FF EEPROM contents and mode to show "?"
+   VAR(Dirty) = true;
 
    // The hex editor is read only since On_simulation_begin() will reload data
-   VAR(Hex).readonly(true);  
+   // and any user changes are lost. Also disable Load/Save/Erase buttons for
+   // the same reasons
+   VAR(Hex).readonly(true);
+   EnableWindow(GET_HANDLE(GDT_LOAD), false);
+   EnableWindow(GET_HANDLE(GDT_SAVE), false);
+   EnableWindow(GET_HANDLE(GDT_ERASE), false);
 }
 
 void On_register_write(REGISTER_ID pId, WORD8 pData)
@@ -468,6 +485,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
                REG(EECR).set_bit(5, pData[5]);               
                
                Log("Update mode: %s", Mode_text[newMode + 1]);
+               VAR(Dirty) = true;
             }
          }
 
@@ -476,27 +494,10 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
          REG(EECR).set_bit(3, pData[3]);
          SET_INTERRUPT_ENABLE(ERDY, pData[3] == 1);
 
-         // Bit 2 - EEMPE: EEPROM Write/Erase Enable
-         //---------------------------------------------------------
-         // EEMPE can only be set if EEPE=0; if EEPE=1 in the register write
-         // then alwahys force EEMPE=0. Can write EEMPE=0 or EEMPE=X any time.
-         // TODO: If EEPE slready set, can EEMPE be set again?
-         // TODO: If the 4 cycle delay due to EERE is emulated one day, then
-         // the EEMPE bit will reset 4 cycles *after* the EERE delay.
-         if(pData[2] == 1) {
-            if(pData[1] == 1) {
-               REG(EECR).set_bit(2, 0);
-            } else {
-               REG(EECR).set_bit(2, 1);
-               REMIND_ME2(4, RMD_AUTOCLEAR_EEMPE);
-            }
-         } else {
-            REG(EECR).set_bit(2, pData[2]);
-         }
-                  
          // Bit 1 - EEPE: EEPROM Write/Erase Enable
          //---------------------------------------------------------
          // If EEMPE=1 and EEPROM is not busy then perform selected write mode
+         // Note that EEPE code here must execute before EEMPE code
          if(pData[1] == 1) {
             if(pData[2] == 1) {
                WARNING("Cannot set EEMPE=1 and EEPE=1 at the same time",
@@ -508,7 +509,25 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
                Write_EEPROM();
             }
          }
-         
+                  
+         // Bit 2 - EEMPE: EEPROM Write/Erase Enable
+         //---------------------------------------------------------
+         // EEMPE can only be set if writing or existing EEPE=0; if
+         // EEPE=1 in the register write then always force EEMPE=0.
+         // Can write EEMPE=0 or EEMPE=X any time.
+         // TODO: If the 4 cycle delay due to EERE is emulated one day, then
+         // the EEMPE bit will reset 4 cycles *after* the EERE delay.
+         if(pData[2] == 1) {
+            if(pData[1] == 1 || REG(EECR)[1] == 1) {
+               REG(EECR).set_bit(2, 0);
+            } else {
+               REG(EECR).set_bit(2, 1);
+               REMIND_ME2(4, RMD_AUTOCLEAR_EEMPE);
+            }
+         } else {
+            REG(EECR).set_bit(2, pData[2]);
+         }
+                           
          // Bit 0 - EERE: EEPROM Read Enable
          //---------------------------------------------------------
          // If EEPROM is not busy then copy byte from memory buffer to EEDR.
@@ -560,6 +579,9 @@ void On_reset(int pCause)
       REG(EEARH) = WORD8(~VAR(EEARH_mask), 0);
       REG(EEARL) = WORD8(~VAR(EEARL_mask), 0);
    }
+   
+   // Force the GUI to refresh the mode display
+   VAR(Dirty) = true;
 }
 
 void On_remind_me(double pTime, int pAux)
@@ -572,8 +594,9 @@ void On_remind_me(double pTime, int pAux)
       // Autoclear EEPE after erase/write cycle finished and set level-
       // triggered ERDY interrupt (only if simulating programming delay)
       case RMD_AUTOCLEAR_EEPE:
-         REG(EECR).set_bit(1, 0);
          SET_INTERRUPT_FLAG(ERDY, FLAG_SET);
+         REG(EECR).set_bit(1, 0);
+         VAR(Dirty) = true;
          break;
       
       // TODO: Add checks for multiple pending RMD_AUTOCLEAR_EEMPE
@@ -601,22 +624,44 @@ void On_sleep(int pMode)
    // entered while EEPROM is actively programming
 }
 
-// TODO: Need On_update_tick() and a "Mode:" display in the GUI
+void On_update_tick(double pTime)
+//*******************************
+// Called periodically to refresh Mode display and hex editor contents.
+// Only update GUI is VAR(Dirty) is true indicating that changes were
+// made since the last On_update_tick()
+{
+   if(VAR(Dirty)) {
+      // Note that get_field() will return -1 if the mode bits are UNKNOWN,
+      // hence the +1 here to get the correct array index.
+      int mode = REG(EECR).get_field(5,4); // EEPMx (mode bits)
+      SetWindowText(GET_HANDLE(GDT_MODE), Mode_text[mode + 1]);
+
+      // If the EEPE bit is set, then the EEPROM is simulating write/erase
+      // time and is currently busy with an operation.
+      SetWindowText(GET_HANDLE(GDT_STATUS), Status_text[REG(EECR)[1]]);
+
+      // Refresh hex editor contents incase AVR has updated EEPROM memory
+      VAR(Hex).refresh();
+
+      VAR(Dirty) = false;
+   }
+}
 
 void On_gadget_notify(GADGET pGadget, int pCode)
 //*********************************************
 // Response to Win32 notification coming from buttons, etc.
 {
-   if(pGadget == GDT_LOG && pCode == BN_CLICKED) {
-      VAR(Log) ^= 1;
+   if(pCode != BN_CLICKED) {
+      return;
    }
-   if(pGadget == GDT_SIMTIME && pCode == BN_CLICKED) {
-      VAR(Simtime) ^= 1;
-   }
-   if(pGadget == GDT_AUTOSAVE && pCode == BN_CLICKED) {
-      VAR(Autosave) ^= 1;
-   }
-   if(pGadget == GDT_VIEW && pCode == BN_CLICKED) {
-      VAR(Hex).show();
+
+   switch(pGadget) {
+      case GDT_LOG:       VAR(Log) ^= 1; break;
+      case GDT_SIMTIME:   VAR(Simtime) ^= 1; break;
+      case GDT_AUTOSAVE:  VAR(Autosave) ^= 1; break;
+      case GDT_VIEW:      VAR(Hex).show(); break;
+      case GDT_LOAD:      VAR(Hex).load(); break;
+      case GDT_SAVE:      VAR(Hex).save(); break;
+      case GDT_ERASE:     VAR(Hex).erase(); break;
    }
 }

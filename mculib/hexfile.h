@@ -45,7 +45,7 @@ private:
    HWND MDI_child;  // Child window of MDI_client containing HEX_child
    HWND HEX_child;  // The "shineinhex" class window inside MDI_child
    
-   void *Pointer;   // Data buffer on which all operations will act on
+   UCHAR *Pointer;  // Data buffer on which all operations will act on
    int Size;        // Total size of data buffer in bytes
    int Offset;      // Value added to the offset display in the hex editor
    
@@ -59,8 +59,8 @@ public:
    void data(void *pPointer, int pSize, int pOffset = 0);
    
    void erase();
-   void load(char *pFile = NULL);
-   void save(char *pFile = NULL);
+   void load();
+   void save();
 
    void hide();
    void show();
