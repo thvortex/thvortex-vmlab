@@ -19,10 +19,7 @@
 //
 // INI file "Version" usage:
 //
-// The version is a hexadecimal integer defined as: 0xhhll000v
-//
-// The "hh" and "ll" are bitmaks for valid bits in EEARH and EEARL. The "v"
-// is 1, 2, or 3 to specify the version of the EECR register. Version 3 is
+// Is 1, 2, or 3 to specify the version of the EECR register. Version 3 is
 // ATmega168 like with split erase/write support, Version 2 is ATmega8 like,
 // and Version 1 is ATtiny22 like (no ERDY interrupt). Version defaults to 0
 // if omitted from INI file; this will cause an error due to missing DISPLAY()
@@ -120,7 +117,7 @@ USE_WINDOW(WINDOW_USER_1); // Window to display registers, etc. See .RC file
 
 REGISTERS_VIEW
    // It may not be safe yet to use VAR(Version) so use local variable here
-   int version = VERSION() & 0xFF;
+   int version = VERSION();
 
 //           ID     .RC ID    substitute "*" by bit names: bi7name, ..., b0
    DISPLAY(EEARH, GDT_EEARH, *, *, *, *, *, *, *, *)
@@ -131,7 +128,7 @@ REGISTERS_VIEW
    } else if(version == 2) {
       DISPLAY(EECR, GDT_EECR, *, *, *, *, EERIE, EEMWE, EEWE, EERE)
    } else if(version == 1) {
-      DISPLAY(EECR, GDT_EECR, *, *, *, *, *, EEMWE, EEWE, EEWE)
+      DISPLAY(EECR, GDT_EECR, *, *, *, *, *, EEMWE, EEWE, EERE)
    }
 END_VIEW
 
@@ -292,6 +289,9 @@ const char *On_create()
    if(VAR(Size) == 0) {
       return "EEPROM peripheral cannot be used if EEPROM size is zero";
    }
+   if(VAR(Size) % 16) {
+      return "EEPROM size must be a multiple of 16";
+   }
 
    // Allocate enough memory to store all of the EEPROM contents
    VAR(Memory) = (UCHAR *) malloc(VAR(Size));
@@ -303,21 +303,22 @@ const char *On_create()
    // simulation is started and actual data from .eep file is loaded.
    memset(VAR(Memory), 0xFF, VAR(Size));
 
-   // Initialize bitmasks for valid register bits based on decoded "Version"
-   int version = VERSION();
-   VAR(EEARH_mask) = (version >> 24) & 0xFF;
-   VAR(EEARL_mask) = (version >> 16) & 0xFF;
+   // Initialize bitmasks for valid register bits based on EEPROM size. This
+   // assumes the EEPROM size is a power of 2.
+   UINT mask = VAR(Size) - 1;
+   VAR(EEARH_mask) = mask >> 8;
+   VAR(EEARL_mask) = mask & 0xFF;
    
    // Bitmask for EECR corresponds to the bits defined in REGISTERS_VIEW
-   VAR(Version) = VERSION() & 0xFF;
+   VAR(Version) = VERSION();
    if(VAR(Version) == 3) {
       VAR(EECR_mask) = 0x3F; // EEPM1, EEPM0, EERIE, EEMPE, EEPE, EERE
    } else if(VAR(Version) == 2) {
       VAR(EECR_mask) = 0x0F; // EERIE, EEMWE, EEWE, EERE
    } else if(VAR(Version) == 1) {
-      VAR(EECR_mask) = 0x07; // EEMWE, EEWE, EEWE
+      VAR(EECR_mask) = 0x07; // EEMWE, EEWE, EERE
    } else {
-      VAR(EECR_mask) = 0;
+      return "Version in INI file must be 1, 2, or 3";
    }
    
    return NULL;
@@ -353,8 +354,6 @@ void On_window_init(HWND pHandle)
    VAR(Hex).readonly(true);
 }
 
-// TODO: Need On_window_init() to set initial checkboxes
-
 void On_simulation_begin()
 //**********************
 // Called at the beginning of simulation.
@@ -367,7 +366,6 @@ void On_simulation_begin()
    // of the simulation. Copy this data to the local memory buffer so that it
    // can be used with an external hex editor control that expects an array
    // of bytes rather than an array of WORD8.
-   // TODO: Use Autosave option
    for(int i = 0; i < VAR(Size); i++) {
       WORD8 *data = GET_MICRO_DATA(DATA_EEPROM, i);
       if(data == NULL) {
@@ -395,16 +393,18 @@ void On_simulation_end()
       REG(i) = WORD8(0,0);
    }
 
-   // Copy the local memory buffer back to VMLAB so that any modifications can
-   // be automatically saved back to the project's .eep file.
+   // If "Auto save" is checked, then copy the local memory buffer back to
+   // VMLAB so that any modifications can be automatically saved back to the
+   // project's .eep file.
    // TODO: This does not appear to be supported by VMLAB at the moment.
-   // TODO: Check "Auto save" option before doing this
-   for(int i = 0; i < VAR(Size); i++) {
-      WORD8 *data = GET_MICRO_DATA(DATA_EEPROM, i);
-      if(data == NULL) {
-         BREAK("Internal error; GET_MICRO_DATA(DATA_EEPROM) returned NULL");
+   if(VAR(Autosave)) {
+      for(int i = 0; i < VAR(Size); i++) {
+         WORD8 *data = GET_MICRO_DATA(DATA_EEPROM, i);
+         if(data == NULL) {
+            BREAK("Internal error; GET_MICRO_DATA(DATA_EEPROM) returned NULL");
+         }
+         *data = VAR(Memory)[i];
       }
-      *data = VAR(Memory)[i];
    }
    
    // Initialize memory back to $FF just as it was before simulation start
@@ -506,6 +506,9 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
                WARNING("Cannot set EEPE=1 if EEMPE is not already set",
                   CAT_EEPROM, WARN_PARAM_BUSY);
             } else {
+               // TODO: Writing the EEPROM requires an additional 2 cycle
+               // CPU delay. This cannot be emulated using the current
+               // VMLAB API.
                Write_EEPROM();
             }
          }
@@ -593,12 +596,14 @@ void On_remind_me(double pTime, int pAux)
    
       // Autoclear EEPE after erase/write cycle finished and set level-
       // triggered ERDY interrupt (only if simulating programming delay)
+      // TODO: Check sleep mode
       case RMD_AUTOCLEAR_EEPE:
          SET_INTERRUPT_FLAG(ERDY, FLAG_SET);
          REG(EECR).set_bit(1, 0);
          VAR(Dirty) = true;
          break;
       
+      // Autoclear of the WDCE bit 4 system clock cycles after it was set
       // TODO: Add checks for multiple pending RMD_AUTOCLEAR_EEMPE
       case RMD_AUTOCLEAR_EEMPE:
          if(REG(EECR)[2] != 0) {
@@ -618,10 +623,11 @@ void On_notify(int pWhat)
 
 void On_sleep(int pMode)
 //*********************
-// The micro has entered in SLEEP mode.
+// The micro has entered in SLEEP mode. SLEEP mode does not affect the
+// completion of a write or erase EEPROM operation, but the ERDY interrupt
+// will only function in Idle or ADC sleep mode.
 {
-   // TODO: Verify how EEPROM is affected by sleep modes? What if SLEEP
-   // entered while EEPROM is actively programming
+   // TODO: Add code to mask/unmask level triggered interrupt
 }
 
 void On_update_tick(double pTime)
