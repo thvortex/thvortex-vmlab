@@ -877,11 +877,21 @@ Hexfile::~Hexfile()
 // static reference count, the last Hexfile instance to be destroyed also
 // releases global resources acquired by the first init() call.
 {
-   // Destroying the MDI_child will also destroy the contained HEX_child.
+   // Destroying HEX_child will also destroy contained ShineInHex control
+   if(HEX_child) {
+      W32_ASSERT( DestroyWindow(HEX_child) );
+   }
+
+   // Destroy MDI child window, active the next MDI child, and request that
+   // the MDI client refreshes the "Windows" menu in the top-most VMALB window
+   // to remove the destroyed MDI child.
    if(MDI_child) {
       SendMessage(MDI_client, WM_MDIDESTROY, (WPARAM) MDI_child, 0);
+      SendMessage(MDI_client, WM_MDINEXT, 0, 0);
+      SendMessage(MDI_client, WM_MDIREFRESHMENU, 0, 0);
+      W32_ASSERT( DrawMenuBar(VMLAB_window) );   
    }
-   
+
    // The last instance of the Hexfile class must also unregister the Win32
    // window class and unload the DLL library from init(). All class variables
    // are set to NULL so the next init() can re-initialize them.
@@ -1088,8 +1098,8 @@ void Hexfile::data(void *pPointer, int pSize, int pOffset)
       SendMessage(HEX_child, HEXM_SETPOINTER, (WPARAM) &Dummy, 1);
    }
    
-   // Force a redraw of the hex editor window
-   InvalidateRect(HEX_child, NULL, true);
+   // The hex editor will invalidate and re-draw its own window in response
+   // to the HEXM_SETPOINTER message.
 }
 void Hexfile::hide()
 //******************************

@@ -197,6 +197,8 @@ int Decode_address()
          CAT_EEPROM, WARN_EEPROM_ADDRES_OUTSIDE);
       return -1;
    } else if(addr->d() > VAR(Size)) {
+      // It should not be possible for this error to occur since assignments
+      // to the EEARx registers are masked based on the EEPROM size.
       WARNING("Address in EEAR registers out of range",
          CAT_EEPROM, WARN_EEPROM_ADDRES_OUTSIDE);
       return -1;
@@ -433,14 +435,14 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
          
       // EEPROM high/low address byte
       //---------------------------------------------------------
-      // Allow changing only those bits defined by VERSION() masks. If
-      // EECR{EEPE]=1 (EEPROM programming in progress) then don't allow
-      // the address registers to be modified.
       case EEARH:
       case EEARL:
+         // Allow changing only those bits defined by EEPROM size masks.   
          mask = (pId == EEARH) ? VAR(EEARH_mask) : VAR(EEARL_mask);      
          Log_register_write(pId, pData, mask);
          
+         // If EECR{EEPE]=1 (EEPROM programming in progress) then don't allow
+         // the address registers to be modified.
          if(REG(EECR)[1] == 1) {
             WARNING("Cannot write EEAR registers while EEPROM busy (EEPE=1)",
                CAT_EEPROM, WARN_WRITE_BUSY);
@@ -452,7 +454,6 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
       
       // EEPROM data register
       //---------------------------------------------------------
-      // No special processing required.
       // TODO: Can EEDR be modified while write/erase in progress?
       case EEDR:
          Log_register_write(EEDR, pData, 0xFF);
@@ -467,10 +468,11 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
 
          // Bits 5,4 - EEPMx: EEPROM Programming Mode Bits
          //---------------------------------------------------------
-         // Mode change only allowed if EEPROM programming not already in
-         // progress (i.e. EEPE must be 0).
          int newMode = pData.get_field(5,4);
          if(newMode != REG(EECR).get_field(5,4)) {
+
+            // Mode change only allowed if EEPROM programming not already in
+            // progress (i.e. EEPE must be 0).
             if(REG(EECR)[1] == 1) {
                WARNING("Cannot change EEPM while EEPROM busy (EEPE=1)",
                   CAT_EEPROM, WARN_PARAM_BUSY);
@@ -484,6 +486,7 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
                REG(EECR).set_bit(4, pData[4]);
                REG(EECR).set_bit(5, pData[5]);               
                
+               // Refresh Mode display in GUI
                Log("Update mode: %s", Mode_text[newMode + 1]);
                VAR(Dirty) = true;
             }
@@ -496,16 +499,24 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
 
          // Bit 1 - EEPE: EEPROM Write/Erase Enable
          //---------------------------------------------------------
-         // If EEMPE=1 and EEPROM is not busy then perform selected write mode
-         // Note that EEPE code here must execute before EEMPE code
+         // Note that this EEPE code block must execute before EEMPE code block
          if(pData[1] == 1) {
-            if(pData[2] == 1) {
-               WARNING("Cannot set EEMPE=1 and EEPE=1 at the same time",
+            // If EEPE=1 and EERE=1 then neither read nor write occurs
+            if(pData[0] == 1) {
+               WARNING("Cannot read (EERE=1) and write (EEPE=1) at the same time",
+                  CAT_EEPROM, WARN_EEPROM_SIMULTANEOUS_RW);
+            }
+            
+            // If EEMPE already 0 then programming operation is ignored. If
+            // EEPROM is busy then EEMPE will always be 0 and cannot be
+            // changed to 1 until the programming operation is finished.
+            else if(REG(EECR)[2] != 1) {
+               WARNING("Cannot set EEPE=1 if EEMPE not already set",
                   CAT_EEPROM, WARN_PARAM_BUSY);
-            } else if(REG(EECR)[2] != 1) {
-               WARNING("Cannot set EEPE=1 if EEMPE is not already set",
-                  CAT_EEPROM, WARN_PARAM_BUSY);
-            } else {
+            }
+            
+            // If EEMPE already 1 then perform selected programming operation
+            else {
                // TODO: Writing the EEPROM requires an additional 2 cycle
                // CPU delay. This cannot be emulated using the current
                // VMLAB API.
@@ -514,34 +525,42 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
          }
                   
          // Bit 2 - EEMPE: EEPROM Write/Erase Enable
-         //---------------------------------------------------------
-         // EEMPE can only be set if writing or existing EEPE=0; if
-         // EEPE=1 in the register write then always force EEMPE=0.
-         // Can write EEMPE=0 or EEMPE=X any time.
+         //---------------------------------------------------------         
+         // Writing EEPE=1 always forces EEMPE=0 even if the write/erase
+         // cannot occur for some other reason; writing EEMPE=0 is always
+         // allowed
+         if(pData[1] == 1 || pData[2] == 0) {
+            REG(EECR).set_bit(2, 0);
+         }
+         
+         // Writing EEMPE=1/X is only allowed if EEPROM not busy (EEPE=0)
+         // The EEMPE will be auto-cleared after 4 cycles
          // TODO: If the 4 cycle delay due to EERE is emulated one day, then
          // the EEMPE bit will reset 4 cycles *after* the EERE delay.
-         if(pData[2] == 1) {
-            if(pData[1] == 1 || REG(EECR)[1] == 1) {
-               REG(EECR).set_bit(2, 0);
+         else {
+            if(pData[2] == 1 && REG(EECR)[1] == 1) {
+               WARNING("Cannot set EEMPE=1 while EEPROM busy (EEPE=1)",
+                  CAT_EEPROM, WARN_PARAM_BUSY);
             } else {
-               REG(EECR).set_bit(2, 1);
+               REG(EECR).set_bit(2, pData[2]);
                REMIND_ME2(4, RMD_AUTOCLEAR_EEMPE);
             }
-         } else {
-            REG(EECR).set_bit(2, pData[2]);
          }
-                           
+         // TODO: Re-test EEMPE functionality
+         
          // Bit 0 - EERE: EEPROM Read Enable
          //---------------------------------------------------------
-         // If EEPROM is not busy then copy byte from memory buffer to EEDR.
-         if(pData[0] == 1) {
-            if(pData[1] == 1) {
-               WARNING("Cannot read (EERE=1) and write (EEPE=1) EEPROM at the same time",
-                  CAT_EEPROM, WARN_EEPROM_SIMULTANEOUS_RW);
-            } else if(REG(EECR)[1] == 1) {
+         if(pData[0] == 1) {            
+            // If EEPROM busy (EEPE already 1) then issue warning
+            if(REG(EECR)[1] == 1) {
                WARNING("Cannot read (EERE=1) while EEPROM busy (EEPE=1)",
                   CAT_EEPROM, WARN_EEPROM_SIMULTANEOUS_RW);
-            } else {
+            }
+            
+            // If writing EEPE=1 and EERE=1 at once, then do nothing here
+            // since the EEPE code block already issued a warning. Otherwise
+            // copy the byte from EEPROM memory buffer to EEDR.
+            else if(pData[1] != 1) {
                int addr = Decode_address();
                if(addr != -1) {
                   // TODO: Reading the EEPROM requires an additional 4 cycle
@@ -555,7 +574,16 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
          }
          
          // ERDY interrupt is level triggered and always set if EEPE=0
-         SET_INTERRUPT_FLAG(ERDY, pData[1] == 0 ? FLAG_SET : FLAG_CLEAR);
+         // TODO: VMLAB ignores SET_INTERRUPT_FLAG() from On_reset()
+         // and the "Reset_status" setting in the .ini file would not
+         // allow the case where EEPROM continues programming across
+         // a reset and therefore ERDY remains cleared. However since
+         // the reset enable mask is always disabled after reset, and
+         // the only way to enable the mask is by writing EECR[EERIE],
+         // we can workaround this problem by always updating the ERDY
+         // flag here based on the current EEPE bit setting.
+         // TODO: Check sleep mode
+         SET_INTERRUPT_FLAG(ERDY, REG(EECR)[1] == 0 ? FLAG_LOCK : FLAG_UNLOCK);
          
          break;
    }   
@@ -583,6 +611,8 @@ void On_reset(int pCause)
       REG(EEARL) = WORD8(~VAR(EEARL_mask), 0);
    }
    
+   // TODO: VMLAB should allow SET_INTERRUPT_FLAG() here
+   
    // Force the GUI to refresh the mode display
    VAR(Dirty) = true;
 }
@@ -598,13 +628,14 @@ void On_remind_me(double pTime, int pAux)
       // triggered ERDY interrupt (only if simulating programming delay)
       // TODO: Check sleep mode
       case RMD_AUTOCLEAR_EEPE:
-         SET_INTERRUPT_FLAG(ERDY, FLAG_SET);
+         SET_INTERRUPT_FLAG(ERDY, FLAG_LOCK);
          REG(EECR).set_bit(1, 0);
          VAR(Dirty) = true;
          break;
       
       // Autoclear of the WDCE bit 4 system clock cycles after it was set
-      // TODO: Add checks for multiple pending RMD_AUTOCLEAR_EEMPE
+      // TODO: Add checks for multiple pending RMD_AUTOCLEAR_EEMPE; each
+      // write of EEMPE=1 should reset the countdown
       case RMD_AUTOCLEAR_EEMPE:
          if(REG(EECR)[2] != 0) {
             WARNING("EEMPE cleared by hardware; previously set 4 cycles ago",
@@ -627,7 +658,8 @@ void On_sleep(int pMode)
 // completion of a write or erase EEPROM operation, but the ERDY interrupt
 // will only function in Idle or ADC sleep mode.
 {
-   // TODO: Add code to mask/unmask level triggered interrupt
+   // TODO: Add code to mask/unmask level triggered interrupt?
+   // TODO: Warn about entering deep sleep mode
 }
 
 void On_update_tick(double pTime)
