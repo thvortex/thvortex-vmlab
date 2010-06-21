@@ -109,6 +109,7 @@ DECLARE_VAR
    bool Simtime;        // True if the "Simulate write/erase time" is checked
    bool Autosave;       // True if the "Auto save" checkbox button is checked
    bool Dirty;          // True if mode bits changed or EEPROM memory updated
+   bool Sleep;          // True if ERDY interrupt disabled by SLEEP mode
    
    Hexfile Hex;         // Helper classs for GUI View/Load/Save/Erase
 END_VAR
@@ -398,7 +399,6 @@ void On_simulation_end()
    // If "Auto save" is checked, then copy the local memory buffer back to
    // VMLAB so that any modifications can be automatically saved back to the
    // project's .eep file.
-   // TODO: This does not appear to be supported by VMLAB at the moment.
    if(VAR(Autosave)) {
       for(int i = 0; i < VAR(Size); i++) {
          WORD8 *data = GET_MICRO_DATA(DATA_EEPROM, i);
@@ -454,10 +454,18 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
       
       // EEPROM data register
       //---------------------------------------------------------
-      // TODO: Can EEDR be modified while write/erase in progress?
       case EEDR:
          Log_register_write(EEDR, pData, 0xFF);
-         REG(EEDR) = pData;
+
+         // If EECR{EEPE]=1 (EEPROM programming in progress) then don't allow
+         // the data register to be modified.
+         if(REG(EECR)[1] == 1) {
+            WARNING("Cannot write EEDR register while EEPROM busy (EEPE=1)",
+               CAT_EEPROM, WARN_WRITE_BUSY);
+         } else {
+            REG(pId) = pData;
+         }
+
          break;
       
       // EEPROM control register
@@ -546,13 +554,13 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
                REMIND_ME2(4, RMD_AUTOCLEAR_EEMPE);
             }
          }
-         // TODO: Re-test EEMPE functionality
          
          // Bit 0 - EERE: EEPROM Read Enable
          //---------------------------------------------------------
          if(pData[0] == 1) {            
-            // If EEPROM busy (EEPE already 1) then issue warning
-            if(REG(EECR)[1] == 1) {
+            // If EEPROM busy (EEPE already 1) then issue warning but only if
+            // the EEPE coce block has not issued a similar warning
+            if(REG(EECR)[1] == 1 && pData[1] != 1) {
                WARNING("Cannot read (EERE=1) while EEPROM busy (EEPE=1)",
                   CAT_EEPROM, WARN_EEPROM_SIMULTANEOUS_RW);
             }
@@ -581,9 +589,14 @@ void On_register_write(REGISTER_ID pId, WORD8 pData)
          // the reset enable mask is always disabled after reset, and
          // the only way to enable the mask is by writing EECR[EERIE],
          // we can workaround this problem by always updating the ERDY
-         // flag here based on the current EEPE bit setting.
-         // TODO: Check sleep mode
-         SET_INTERRUPT_FLAG(ERDY, REG(EECR)[1] == 0 ? FLAG_LOCK : FLAG_UNLOCK);
+         // flag here based on the current EEPE bit setting. If disabled
+         // by sleep deeper than ADC noise reduction, then force the
+         // the flag to zero so that no interrupt is triggered.
+         if(VAR(Sleep)) {
+            SET_INTERRUPT_FLAG(ERDY, FLAG_UNLOCK);
+         } else {
+            SET_INTERRUPT_FLAG(ERDY, REG(EECR)[1] == 0 ? FLAG_LOCK : FLAG_UNLOCK);
+         }
          
          break;
    }   
@@ -593,6 +606,8 @@ void On_reset(int pCause)
 //***********************
 // Initialize registers to the desired value.
 {
+   VAR(Sleep) = false;
+
    // Initialize all registers to known zero state. If the EECR[EEPE]
    // bit is set (EEPROM write/erase still in progress) then preserve the
    // contents of the EEPE, EEPM1, and EEPM0 bits across reset.
@@ -625,17 +640,23 @@ void On_remind_me(double pTime, int pAux)
    switch(pAux) {
    
       // Autoclear EEPE after erase/write cycle finished and set level-
-      // triggered ERDY interrupt (only if simulating programming delay)
-      // TODO: Check sleep mode
+      // triggered ERDY interrupt (only if simulating programming delay).
+      // If disabled by SLEEP then do not update ERDY flag
       case RMD_AUTOCLEAR_EEPE:
-         SET_INTERRUPT_FLAG(ERDY, FLAG_LOCK);
+         if(!VAR(Sleep)) {
+            SET_INTERRUPT_FLAG(ERDY, FLAG_LOCK);
+         }
          REG(EECR).set_bit(1, 0);
          VAR(Dirty) = true;
          break;
       
       // Autoclear of the WDCE bit 4 system clock cycles after it was set
       // TODO: Add checks for multiple pending RMD_AUTOCLEAR_EEMPE; each
-      // write of EEMPE=1 should reset the countdown
+      // write of EEMPE=1 should reset the countdown. Due to some timing/
+      // round-off bugs in VMLAB, we can't reliably use REMIND_ME2() and
+      // GET_MICRO_INFO(INFO_CPU_CYCLES) together. The cycle count returned
+      // by GET_MICRO_INFO() may be plus or minus 1 compared to the cycle
+      // count at which we expect On_remind_me() to execute.
       case RMD_AUTOCLEAR_EEMPE:
          if(REG(EECR)[2] != 0) {
             WARNING("EEMPE cleared by hardware; previously set 4 cycles ago",
@@ -646,20 +667,37 @@ void On_remind_me(double pTime, int pAux)
    }
 }
 
-void On_notify(int pWhat)
-//***********************
-// Notification coming from some other DLL instance.
-{
-}
-
 void On_sleep(int pMode)
 //*********************
 // The micro has entered in SLEEP mode. SLEEP mode does not affect the
 // completion of a write or erase EEPROM operation, but the ERDY interrupt
-// will only function in Idle or ADC sleep mode.
+// will only function in Idle or ADC noise reduction mode.
 {
-   // TODO: Add code to mask/unmask level triggered interrupt?
-   // TODO: Warn about entering deep sleep mode
+   bool oldSleep = VAR(Sleep);
+   VAR(Sleep) = pMode > SLEEP_NOISE_REDUCTION;
+   
+   if(VAR(Sleep) != oldSleep) {
+
+      // If disabled by sleep, then mask ERDY interrupt
+      if(VAR(Sleep)) {
+         Log("Disabled by SLEEP");
+         SET_INTERRUPT_FLAG(ERDY, FLAG_UNLOCK);
+         
+         // Warn if EEPROM busy (EEPE=1) and ERDY interrupt enabled (EERIE=1)
+         if(REG(EECR)[1] == 1 && REG(EECR)[3] == 1) {
+            WARNING("ERDY interrupt will not fire while disabled by SLEEP",
+               CAT_EEPROM, WARN_PARAM_BUSY);
+         }
+      }
+      
+      // If enabled by sleep, update ERDY flag to reflect EEPE state
+      else {
+         Log("Exit from SLEEP");
+         SET_INTERRUPT_FLAG(ERDY, REG(EECR)[1] == 0 ? FLAG_LOCK : FLAG_UNLOCK);
+      }
+      
+      VAR(Dirty) = true;
+   }   
 }
 
 void On_update_tick(double pTime)
@@ -675,10 +713,15 @@ void On_update_tick(double pTime)
       SetWindowText(GET_HANDLE(GDT_MODE), Mode_text[mode + 1]);
 
       // If the EEPE bit is set, then the EEPROM is simulating write/erase
-      // time and is currently busy with an operation.
-      SetWindowText(GET_HANDLE(GDT_STATUS), Status_text[REG(EECR)[1]]);
+      // time and is currently busy with an operation. If in sleep mode, then
+      // display "Disabled" regardless of EEPE bit state.
+      if(VAR(Sleep)) {
+         SetWindowText(GET_HANDLE(GDT_STATUS), "Disabled");
+      } else {
+         SetWindowText(GET_HANDLE(GDT_STATUS), Status_text[REG(EECR)[1]]);
+      }
 
-      // Refresh hex editor contents incase AVR has updated EEPROM memory
+      // Refresh hex editor contents in case AVR has updated EEPROM memory
       VAR(Hex).refresh();
 
       VAR(Dirty) = false;
