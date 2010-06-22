@@ -292,9 +292,6 @@ const char *On_create()
    if(VAR(Size) == 0) {
       return "EEPROM peripheral cannot be used if EEPROM size is zero";
    }
-   if(VAR(Size) % 16) {
-      return "EEPROM size must be a multiple of 16";
-   }
 
    // Allocate enough memory to store all of the EEPROM contents
    VAR(Memory) = (UCHAR *) malloc(VAR(Size));
@@ -671,7 +668,8 @@ void On_sleep(int pMode)
 //*********************
 // The micro has entered in SLEEP mode. SLEEP mode does not affect the
 // completion of a write or erase EEPROM operation, but the ERDY interrupt
-// will only function in Idle or ADC noise reduction mode.
+// will only function in Idle or ADC noise reduction mode. This was verified
+// on real ATmega48 hardware while running with debugWIRE over an AVR DRagon.
 {
    bool oldSleep = VAR(Sleep);
    VAR(Sleep) = pMode > SLEEP_NOISE_REDUCTION;
