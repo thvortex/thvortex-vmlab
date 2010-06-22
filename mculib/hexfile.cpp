@@ -79,8 +79,7 @@ enum { FT_HEX = 1, FT_SREC, FT_GEN, FT_BIN };
    
 // Confirmation question displayed when the erase() function is called
 #define CONFIRM_ERASE \
-   "Are you sure you want to erase\n" \
-   "entire EEPROM memory to $FF?"
+   "Are you sure you want to erase entire EEPROM memory to $FF?"
    
 // Initial size of MDI child window (not client area)
 enum { INIT_WIDTH = 629, INIT_HEIGHT = 305 };
@@ -498,14 +497,16 @@ void Write_HEX(UCHAR *pBuffer, const int pSize, const char *pName)
 
    // Write or skip over EEPROM contents one row (16 bytes) at a time.
    for(int addr = 0; addr < pSize; addr += 0x10) {
+      int rowAddr = (addr + 0x10 < pSize) ? (addr + 0x10) : pSize;
+      int count = rowAddr - addr;
       UCHAR checksum;
       int i;
    
       // If the entire row contains $FF bytes then don't write it to file
-      for(i = addr; i < addr + 0x10; i++) {
+      for(i = addr; i < rowAddr; i++) {
          if(pBuffer[i] != 0xFF) break;
       }
-      if(i == addr + 0x10) continue;
+      if(i == rowAddr) continue;
 
       // If the current "addr" has crossed into the next 16-bit boundry,
       // then write an "Extended Linear Address" record. The checksum
@@ -518,12 +519,12 @@ void Write_HEX(UCHAR *pBuffer, const int pSize, const char *pName)
          file.printf(":02000004%04X%02X\n", segment, checksum);
       }
 
-      // Write beginning of "Data Record" and lower 16-bits of current "addr"
-      checksum = 0x10 + Sum(addr & 0xFFFF);
-      file.printf(":10%04X00", addr & 0xFFFF);
+      // Write beginning of "Data Record", count, and lower 16-bits of "addr"
+      checksum = count + Sum(addr & 0xFFFF);
+      file.printf(":%02X%04X00", count, addr & 0xFFFF);
       
       // Write all bytes in the row while also updating the checksum
-      for(i = addr; i < addr + 0x10; i++) {
+      for(i = addr; i < rowAddr; i++) {
          checksum += pBuffer[i];
          file.printf("%02X", pBuffer[i]);
       }
@@ -551,27 +552,29 @@ void Write_SREC(UCHAR *pBuffer, const int pSize, const char *pName)
 
    // Write or skip over EEPROM contents one row (16 bytes) at a time.
    for(int addr = 0; addr < pSize; addr += 0x10) {
+      int rowAddr = (addr + 0x10 < pSize) ? (addr + 0x10) : pSize;
+      int count = rowAddr - addr;
       UCHAR checksum;
       int i;
    
       // If the entire row contains $FF bytes then don't write it to file
-      for(i = addr; i < addr + 0x10; i++) {
+      for(i = addr; i < rowAddr; i++) {
          if(pBuffer[i] != 0xFF) break;
       }
-      if(i == addr + 0x10) continue;
+      if(i == rowAddr) continue;
 
       // Based on the current "addr" size, write beginning of either an "S1"
       // or "S2" record type.
       if(addr <= 0xFFFF) {
-         checksum = 0x13 + Sum(addr);
-         file.printf("S113%04X", addr);
+         checksum = (count + 3) + Sum(addr);
+         file.printf("S1%02X%04X", count + 3, addr);
       } else {
-         checksum = 0x14 + Sum(addr);
-         file.printf("S214%06X", addr);
+         checksum = (count + 4) + Sum(addr);
+         file.printf("S2%02X%06X", count + 4, addr);
       }
       
       // Write all bytes in the row while also updating the checksum
-      for(i = addr; i < addr + 0x10; i++) {
+      for(i = addr; i < rowAddr; i++) {
          checksum += pBuffer[i];
          file.printf("%02X", pBuffer[i]);
       }
