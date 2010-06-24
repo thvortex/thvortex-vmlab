@@ -194,6 +194,8 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		mov    [HM.text_color+44][ebx], 070h
 		mov    HM.undo_start[ebx], 0
 		mov    HM.is_readonly[ebx], 0
+		mov    HM.find_hwnd[ebx], 0
+		mov    HM.select_hwnd[ebx], 0
 		
 		invoke CreateFontIndirect, ADDR lf1
 		mov    [HM.lf_choose+ 0][ebx], eax
@@ -357,7 +359,11 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		invoke InvalidateRect, HM.hWnd[ebx], 0, 0
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==HEXM_SETSEL
+		; TODO: Is there a better way to do this check?
 		mov    eax, wParam
+		.if eax > HM._size[ebx]
+			mov    eax, HM._size[ebx]
+		.endif
 		sub    eax, HM._start[ebx]
 		mov    HM.sel_start[ebx], eax
 		xor    edx, edx
@@ -1165,9 +1171,19 @@ ttrack:
 		@exit:
 			invoke GlobalFree, hex_clip_copy
 		.elseif eax == 13002
-			invoke CreateDialogParamW, hInstance, 666, HM.hWnd[ebx], ADDR DlgFind, ebx
+			.if HM.find_hwnd[ebx]
+				invoke ShowWindow, HM.find_hwnd[ebx], SW_SHOW
+				invoke SetActiveWindow, HM.find_hwnd[ebx]
+			.else
+				invoke CreateDialogParamW, hInstance, 666, HM.hWnd[ebx], ADDR DlgFind, ebx
+			.endif
 		.elseif eax == 13003
-			invoke CreateDialogParam,  hInstance, 999, HM.hWnd[ebx], ADDR DlgSelect, ebx
+			.if HM.select_hwnd[ebx]
+				invoke ShowWindow, HM.select_hwnd[ebx], SW_SHOW
+				invoke SetActiveWindow, HM.select_hwnd[ebx]
+			.else
+				invoke CreateDialogParamW, hInstance, 999, HM.hWnd[ebx], ADDR DlgSelect, ebx
+			.endif
 		.elseif eax == 13004
 			invoke DoUndo
 			invoke InvalidateRect, HM.hWnd[ebx], 0, 0
@@ -1721,6 +1737,13 @@ ttrack:
 		invoke DestroyMenu,  [HM.hex_popupA][ebx]
 		invoke DestroyMenu,  [HM.hex_popupB][ebx]
 		invoke DestroyMenu,  [HM.hex_popup][ebx]
+      
+		.if HM.find_hwnd[ebx]
+			invoke DestroyWindow, HM.find_hwnd[ebx]
+		.endif
+		.if HM.select_hwnd[ebx]
+			invoke DestroyWindow, HM.select_hwnd[ebx]
+		.endif
 	
 	.elseif eax==WM_NCDESTROY
 		invoke HeapFree, glob_heap, 0, ebx
@@ -2366,6 +2389,9 @@ DlgFind proc uses esi edi hDlg:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 		invoke SetWindowLong, hDlg, GWL_USERDATA, lParam
 		invoke SetLayeredWindowAttributes, hDlg, 0, 255, LWA_ALPHA
 		invoke ShowWindow, hDlg, SW_SHOW
+		mov    eax, lParam
+		mov    ecx, hDlg
+		mov    HM.find_hwnd[eax], ecx
 	.elseif eax == WM_COMMAND
 		invoke IsDlgButtonChecked, hDlg, 705
 		mov    reversed, eax
@@ -2481,14 +2507,19 @@ DlgFind proc uses esi edi hDlg:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 			.else
 				invoke SetLayeredWindowAttributes, hDlg, 0, 255, LWA_ALPHA
 			.endif
+		.elseif eax == 708
+			invoke EndDialog, hDlg, 0
+		.else
+			xor	eax, eax
+			ret
 		.endif
 	.elseif eax == WM_CLOSE
-		invoke DestroyWindow, hDlg
+		invoke EndDialog, hDlg, 0
 	.else
-		xor    eax, eax
+		xor	eax, eax
 		ret
 	.endif
-	mov    eax, 0
+	mov	eax, 1
 	ret
 DlgFind endp
 
@@ -2501,6 +2532,10 @@ DlgSelect proc hDlg:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 	mov    eax, uMsg
 	.if eax == WM_INITDIALOG
 		invoke SetWindowLong, hDlg, GWL_USERDATA, lParam
+		invoke ShowWindow, hDlg, SW_SHOW
+		mov    eax, lParam
+		mov    ecx, hDlg
+		mov    HM.select_hwnd[eax], ecx
 	.elseif eax == WM_COMMAND
 		.if wParam == 805
 			invoke SendDlgItemMessage, hDlg, 801, WM_GETTEXT, 9, ADDR s_offs
@@ -2511,6 +2546,8 @@ DlgSelect proc hDlg:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 			mov    E_OFFS, eax
 			invoke GetWindowLong, hDlg, GWL_USERDATA
 			invoke SendMessage, HM.hWnd[eax], HEXM_SETSEL, S_OFFS, E_OFFS
+			invoke EndDialog, hDlg, 0
+		.elseif wParam == 806
 			invoke EndDialog, hDlg, 0
 		.endif
 	.elseif eax == WM_CLOSE

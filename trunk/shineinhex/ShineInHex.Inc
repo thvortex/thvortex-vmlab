@@ -101,6 +101,8 @@ HM struct
 	is_readonly             dd ?
 	lf_choose				dd 5 dup (?)
 	undo_start				dd ?
+	find_hwnd				dd ? ; handle of "Find" dialog (if open)
+	select_hwnd				dd ? ; handle of "Select" dialog (if open)
 HM ends
 
 .const
@@ -157,8 +159,8 @@ HM ends
 	menui_copy_x01  db "\x00 sel",0
 	menui_copy_x02  db "\x00 ¬sel",0
 	
-	menui_find      db "Find",0
-	menui_select    db "Select",0
+	menui_find      db "Find...",0
+	menui_select    db "Select...",0
 	
 	error_hex      db "Need one more number",0
 	hex_byte       db 0
