@@ -28,7 +28,7 @@ DummyProc proc uses esi edi hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 	; allocate two structures for saving unique properties
 	mov    edi, sizeof HM            ; control properties
 	add    edi, sizeof WndProcThunk  ; thunk code
-	invoke HeapAlloc, glob_heap, HEAP_ZERO_MEMORY, edi
+	invoke HeapAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS or HEAP_ZERO_MEMORY, edi
 	mov    ecx, hWin
 	mov    HM.hWnd[eax], ecx
 	mov    esi, eax
@@ -196,11 +196,11 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		mov    HM.find_hwnd[ebx], 0
 		mov    HM.select_hwnd[ebx], 0
 		
-		; Allocate smallest possible screen color buffer
+		; Allocate smallest possible screen color buffer (1 * 8h + 8h = 10h)
 		mov    HM.screen_colors_len[ebx], 1h
-		invoke HeapAlloc, glob_heap, 0, 8h
+		invoke HeapAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, 10h
 		mov    HM.screen_colors_st2[ebx], eax
-		invoke HeapAlloc, glob_heap, 0, 8h
+		invoke HeapAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, 10h
 		mov    HM.screen_colors_st3[ebx], eax
 		
 		invoke CreateFontIndirect, ADDR lf1
@@ -324,7 +324,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 	.elseif eax==HEXM_SETPOINTER
 		invoke ClearUndoBuf
 			
-		invoke HeapAlloc, glob_heap, 0, sizeof UNDO
+		invoke HeapAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, sizeof UNDO
 		mov    HM.undo_start[ebx], eax
 		mov    DWORD PTR [eax+ 0], 0
 		mov    DWORD PTR [eax+ 4], 0
@@ -365,11 +365,14 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		invoke InvalidateRect, HM.hWnd[ebx], 0, 0
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==HEXM_SETSEL
-		; TODO: Is there a better way to do this check?
+		mov    eax, HM._size[ebx]
+		.if wParam > eax
+			mov    wParam, eax
+		.endif			
+		.if lParam > eax
+			mov    lParam, eax
+		.endif				
 		mov    eax, wParam
-		.if eax > HM._size[ebx]
-			mov    eax, HM._size[ebx]
-		.endif
 		sub    eax, HM._start[ebx]
 		mov    HM.sel_start[ebx], eax
 		xor    edx, edx
@@ -1803,7 +1806,7 @@ AllocUndo proc
 	LOCAL pUndo:DWORD
 		
 	mov    HM.can_undo[ebx], 1
-	invoke HeapAlloc, glob_heap, 0, sizeof UNDO
+	invoke HeapAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, sizeof UNDO
 	mov    pUndo, eax
 	mov    ecx, HM.undo_start[ebx]
 	mov    edx, DWORD PTR [ecx+12]
@@ -1835,7 +1838,7 @@ AllocUndo proc
 	inc    ecx
 	@@:
 	mov    DWORD PTR [eax+ 4], ecx
-	invoke HeapAlloc, glob_heap, 0, ecx
+	invoke HeapAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, ecx
 	mov    ecx, pUndo
 	mov    DWORD PTR [ecx+0], eax
 	mov    edi, eax
@@ -2217,20 +2220,19 @@ SetScreenColors proc uses edi
 	sub    ecx, sc_start	
 
 	; Reallocate screen color buffers as needed to support large window sizes
+	; Buffer size in bytes = (screen_colors_len * 8 + 8) The "+ 8" avoids a
+	; buffer overflow when the cursor moves 1 position past the last hex byte
 	.if ecx > HM.screen_colors_len[ebx]
 		mov    HM.screen_colors_len[ebx], ecx
-
-		invoke HeapFree, glob_heap, 0, HM.screen_colors_st2[ebx]
-		invoke HeapFree, glob_heap, 0, HM.screen_colors_st3[ebx]
-				
-		mov    ecx, HM.screen_colors_len[ebx]
 		shl    ecx, 3
-		invoke HeapAlloc, glob_heap, 0, ecx
+		add    ecx, 8 
+		invoke HeapReAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, HM.screen_colors_st2[ebx], ecx
 		mov    HM.screen_colors_st2[ebx], eax
 
 		mov    ecx, HM.screen_colors_len[ebx]
 		shl    ecx, 3
-		invoke HeapAlloc, glob_heap, 0, ecx
+		add    ecx, 8
+		invoke HeapReAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, HM.screen_colors_st3[ebx], ecx
 		mov    HM.screen_colors_st3[ebx], eax
 
 		mov    ecx, HM.screen_colors_len[ebx]
