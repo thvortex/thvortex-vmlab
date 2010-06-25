@@ -60,9 +60,10 @@ UNDO STRUCT
 UNDO ENDS
 
 HM struct
-	hWnd       				dd ? ; handle of control
-	screen_colors_st2  dd 4096*2  dup (?)
-	screen_colors_st3  dd 4096*2  dup (?)
+	hWnd       				dd ? ; handle of control (must be the first item in the structure)
+	screen_colors_st2  dd ? ; Pointer to color buffer
+	screen_colors_st3  dd ? ; Pointer to color buffer
+	screen_colors_len  dd ? ; Size (in displayed chars) of color buffers (screen_colors_len * 8 = byte size of each buffer)
 	bk_color				dd 12 dup (?)
 	text_color				dd 12 dup (?)
 	rc1 					RECT <?> ; 1st stage rect
