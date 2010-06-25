@@ -28,7 +28,7 @@ DummyProc proc uses esi edi hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 	; allocate two structures for saving unique properties
 	mov    edi, sizeof HM            ; control properties
 	add    edi, sizeof WndProcThunk  ; thunk code
-	invoke HeapAlloc, glob_heap, 0, edi
+	invoke HeapAlloc, glob_heap, HEAP_ZERO_MEMORY, edi
 	mov    ecx, hWin
 	mov    HM.hWnd[eax], ecx
 	mov    esi, eax
@@ -41,8 +41,7 @@ DummyProc proc uses esi edi hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 	mov	   DWORD PTR [esi+0], 042444C7h ; sorta trick
 	mov	   DWORD PTR [esi+4], eax       ; sorta eax -> this
 	mov	   BYTE  PTR [esi+8], 0E9h      ; sorta jmp
-	mov	   DWORD PTR [esi+9], ecx       ; sorta relative proc addr
-		
+	mov	   DWORD PTR [esi+9], ecx       ; sorta relative proc addr	
 	invoke SetWindowLong, hWin, GWL_WNDPROC, esi
 	
 	; return pProc(hWnd, uMsg, wParam, lParam);
@@ -196,6 +195,13 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		mov    HM.is_readonly[ebx], 0
 		mov    HM.find_hwnd[ebx], 0
 		mov    HM.select_hwnd[ebx], 0
+		
+		; Allocate smallest possible screen color buffer
+		mov    HM.screen_colors_len[ebx], 1h
+		invoke HeapAlloc, glob_heap, 0, 8h
+		mov    HM.screen_colors_st2[ebx], eax
+		invoke HeapAlloc, glob_heap, 0, 8h
+		mov    HM.screen_colors_st3[ebx], eax
 		
 		invoke CreateFontIndirect, ADDR lf1
 		mov    [HM.lf_choose+ 0][ebx], eax
@@ -1592,13 +1598,17 @@ ttrack:
 		xor    edx, edx
 		div    HM.view_lenx[ebx]
 		mov    line_count,  edx
-		mov    eax, [HM.screen_colors_st2+esi*8+0][ebx]
+		mov    eax, HM.screen_colors_st2[ebx]
+		mov    eax, [esi*8+0][eax]
 		mov    col1a, eax
-		mov    eax, [HM.screen_colors_st2+esi*8+4][ebx]
+		mov    eax, HM.screen_colors_st2[ebx]
+		mov    eax, [esi*8+4][eax]
 		mov    col2a, eax
-		mov    eax, [HM.screen_colors_st3+esi*8+0][ebx]
+		mov    eax, HM.screen_colors_st3[ebx]
+		mov    eax, [esi*8+0][eax]
 		mov    col1b, eax
-		mov    eax, [HM.screen_colors_st3+esi*8+4][ebx]
+		mov    eax, HM.screen_colors_st3[ebx]
+		mov    eax, [esi*8+4][eax]
 		mov    col2b, eax
 		mov    tem1, esi
 		xor    edx, edx
@@ -1628,8 +1638,9 @@ ttrack:
 		mov    eax, HM.view_lenx[ebx]
 		cmp    line_count, eax
 		jz     @str_out
-		mov    eax, [HM.screen_colors_st2+esi*8+0][ebx]
-		mov    ecx, [HM.screen_colors_st2+esi*8+4][ebx]
+		mov    eax, HM.screen_colors_st2[ebx]
+		mov    ecx, [esi*8+4][eax]
+		mov    eax, [esi*8+0][eax]
 		cmp    edi, tot_size
 		jz     @str_out
 		cmp    eax, col1a
@@ -1746,6 +1757,8 @@ ttrack:
 		.endif
 	
 	.elseif eax==WM_NCDESTROY
+		invoke HeapFree, glob_heap, 0, HM.screen_colors_st2[ebx]
+		invoke HeapFree, glob_heap, 0, HM.screen_colors_st3[ebx]
 		invoke HeapFree, glob_heap, 0, ebx
 		
 	.else
@@ -2185,8 +2198,6 @@ SetScreenColors proc uses edi
 	LOCAL sc_start:DWORD
 	LOCAL sc_end:DWORD
 
-	lea    esi, HM.screen_colors_st2[ebx]
-	lea    edi, HM.screen_colors_st3[ebx]
 	mov    ecx, HM.pointer[ebx]
 	mov    eax, HM.vscrollpos[ebx]
 	mul    HM.view_lenx[ebx]
@@ -2204,6 +2215,30 @@ SetScreenColors proc uses edi
 	mov    sc_end, ecx
 	mov    ecx, sc_end
 	sub    ecx, sc_start	
+
+	; Reallocate screen color buffers as needed to support large window sizes
+	.if ecx > HM.screen_colors_len[ebx]
+		mov    HM.screen_colors_len[ebx], ecx
+
+		invoke HeapFree, glob_heap, 0, HM.screen_colors_st2[ebx]
+		invoke HeapFree, glob_heap, 0, HM.screen_colors_st3[ebx]
+				
+		mov    ecx, HM.screen_colors_len[ebx]
+		shl    ecx, 3
+		invoke HeapAlloc, glob_heap, 0, ecx
+		mov    HM.screen_colors_st2[ebx], eax
+
+		mov    ecx, HM.screen_colors_len[ebx]
+		shl    ecx, 3
+		invoke HeapAlloc, glob_heap, 0, ecx
+		mov    HM.screen_colors_st3[ebx], eax
+
+		mov    ecx, HM.screen_colors_len[ebx]
+	.endif
+	
+	mov    esi, HM.screen_colors_st2[ebx]
+	mov    edi, HM.screen_colors_st3[ebx]
+
 	; HIGHLIGHTING OF THE LOWEST PRIO. - normal bk, normal text
   @@:
 	dec    ecx
@@ -2242,8 +2277,8 @@ SetScreenColors proc uses edi
 	jmp    @B
   @@:
 	; HIGHLIGHTING OF BIGGER PRIO. - cursor pos
-	lea    esi, HM.screen_colors_st2[ebx]
-	lea    edi, HM.screen_colors_st3[ebx]
+	mov    esi, HM.screen_colors_st2[ebx]
+	mov    edi, HM.screen_colors_st3[ebx]
 	mov    ecx, HM.sel_start[ebx]
 	mov    edx, HM.sel_end[ebx]
 	cmp    ecx, edx
