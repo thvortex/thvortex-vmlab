@@ -218,8 +218,6 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		mov    HM.hex_popup[ebx], eax
 		invoke CreatePopupMenu
 		mov    HM.hex_popupA[ebx], eax
-		invoke CreatePopupMenu
-		mov    HM.hex_popupB[ebx], eax
 		
 		mov    eax, offset hexlook
 		mov    HM.pointer[ebx],   OFFSET hex_nl
@@ -237,9 +235,9 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		
 		invoke AppendMenu,  HM.hex_popup[ebx], MF_POPUP, HM.hex_popupA[ebx], ADDR menu_copy
 		
-		invoke AppendMenu,  HM.hex_popupB[ebx], MF_STRING, 13002, ADDR menui_find
-		invoke AppendMenu,  HM.hex_popupB[ebx], MF_STRING, 13003, ADDR menui_select
-		invoke AppendMenu,  HM.hex_popup[ebx], MF_POPUP, HM.hex_popupB[ebx], ADDR menu_dialogs
+		invoke AppendMenu,  HM.hex_popup[ebx], MF_SEPARATOR, 0, 0
+		invoke AppendMenu,  HM.hex_popup[ebx], MF_STRING, 13002, ADDR menui_find
+		invoke AppendMenu,  HM.hex_popup[ebx], MF_STRING, 13003, ADDR menui_select
 		
 		invoke SendMessage, HM.hWnd[ebx], HEXM_SETFONT, 0, 0
 
@@ -1749,7 +1747,6 @@ ttrack:
 		invoke DeleteObject, [HM.lf_choose+16][ebx]
 		invoke DeleteDC,      HM.mdc[ebx]
 		invoke DestroyMenu,  [HM.hex_popupA][ebx]
-		invoke DestroyMenu,  [HM.hex_popupB][ebx]
 		invoke DestroyMenu,  [HM.hex_popup][ebx]
       
 		.if HM.find_hwnd[ebx]
