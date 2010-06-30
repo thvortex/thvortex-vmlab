@@ -107,7 +107,7 @@ DECLARE_VAR
 
    bool Log;            // True if the "Log" checkbox button is checked
    bool Simtime;        // True if the "Simulate write/erase time" is checked
-   bool Autosave;       // True if the "Auto save" checkbox button is checked
+   bool Persistent;     // True if the "Persistent" checkbox button is checked
    bool Dirty;          // True if mode bits changed or EEPROM memory updated
    bool Sleep;          // True if ERDY interrupt disabled by SLEEP mode
    
@@ -330,7 +330,10 @@ void On_destroy()
 // buffer that was previously allocated inside On_create()
 {
    // Deallocate EEPROM contents memory previously allocated in On_create()
+   // and destroy the hex editor window to ensure no accidental memory
+   // references to the deallocated buffer.
    if(VAR(Memory)) {
+      VAR(Hex).destroy();
       free(VAR(Memory));
    }
 }
@@ -339,9 +342,10 @@ void On_window_init(HWND pHandle)
 //*******************************
 // Window initialization. Set initial check box state and setup Hexfile class.
 {
-   // The "Auto Save" checkbox is initially enabled
-   SendMessage(GET_HANDLE(GDT_AUTOSAVE), BM_SETCHECK, BST_CHECKED, 0);
-   VAR(Autosave) = true;
+   // The "Persistent" checkbox is initially enabled
+   // TODO: Uncomment this block once VMLAB 3.16 is released and it works
+   //SendMessage(GET_HANDLE(GDT_PERSISTENT), BM_SETCHECK, BST_CHECKED, 0);
+   //VAR(Persistent) = true;
    
    // Initialize Hexfile support class. For some reason VMLAB adds a space
    // in front of the title string for most child windows, so this peripheral
@@ -393,10 +397,10 @@ void On_simulation_end()
       REG(i) = WORD8(0,0);
    }
 
-   // If "Auto save" is checked, then copy the local memory buffer back to
+   // If "Persistent" is checked, then copy the local memory buffer back to
    // VMLAB so that any modifications can be automatically saved back to the
    // project's .eep file.
-   if(VAR(Autosave)) {
+   if(VAR(Persistent)) {
       for(int i = 0; i < VAR(Size); i++) {
          WORD8 *data = GET_MICRO_DATA(DATA_EEPROM, i);
          if(data == NULL) {
@@ -735,12 +739,12 @@ void On_gadget_notify(GADGET pGadget, int pCode)
    }
 
    switch(pGadget) {
-      case GDT_LOG:       VAR(Log) ^= 1; break;
-      case GDT_SIMTIME:   VAR(Simtime) ^= 1; break;
-      case GDT_AUTOSAVE:  VAR(Autosave) ^= 1; break;
-      case GDT_VIEW:      VAR(Hex).show(); break;
-      case GDT_LOAD:      VAR(Hex).load(); break;
-      case GDT_SAVE:      VAR(Hex).save(); break;
-      case GDT_ERASE:     VAR(Hex).erase(); break;
+      case GDT_LOG:        VAR(Log) ^= 1; break;
+      case GDT_SIMTIME:    VAR(Simtime) ^= 1; break;
+      case GDT_PERSISTENT: VAR(Persistent) ^= 1; break;
+      case GDT_VIEW:       VAR(Hex).show(); break;
+      case GDT_LOAD:       VAR(Hex).load(); break;
+      case GDT_SAVE:       VAR(Hex).save(); break;
+      case GDT_ERASE:      VAR(Hex).erase(); break;
    }
 }

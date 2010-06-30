@@ -57,6 +57,7 @@ public:
 
    void init(HINSTANCE pInstance, HWND pHandle, char *pTitle, int pIcon = 0);   
    void data(void *pPointer, int pSize, int pOffset = 0);
+   void destroy();
    
    void erase();
    void load();

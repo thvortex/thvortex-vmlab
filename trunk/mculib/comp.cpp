@@ -34,7 +34,7 @@ int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {return 1;} // is DLL
 // Reference voltage applied to AIN0 pin if ACBG=1 in ACSR
 #define VREF_VOLTAGE 1.1
 
-// Comparator mode as a combination of ACISx bits overriden by ACD.
+// Comparator mode as a combination of ACISx bits
 // NOTE: WORD8::get_field() returns -1 for unknown bits
 enum { MODE_UNKNOWN = -1, MODE_TOGGLE, MODE_RESERVED, MODE_FALL, MODE_RISE };
 const char *Mode_text[] = {

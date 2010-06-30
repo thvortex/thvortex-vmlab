@@ -880,20 +880,8 @@ Hexfile::~Hexfile()
 // static reference count, the last Hexfile instance to be destroyed also
 // releases global resources acquired by the first init() call.
 {
-   // Destroying HEX_child will also destroy contained ShineInHex control
-   if(HEX_child) {
-      W32_ASSERT( DestroyWindow(HEX_child) );
-   }
-
-   // Destroy MDI child window, active the next MDI child, and request that
-   // the MDI client refreshes the "Windows" menu in the top-most VMALB window
-   // to remove the destroyed MDI child.
-   if(MDI_child) {
-      SendMessage(MDI_client, WM_MDIDESTROY, (WPARAM) MDI_child, 0);
-      SendMessage(MDI_client, WM_MDINEXT, 0, 0);
-      SendMessage(MDI_client, WM_MDIREFRESHMENU, 0, 0);
-      W32_ASSERT( DrawMenuBar(VMLAB_window) );   
-   }
+   // Destroy the HEX editor control and MDI child windows
+   destroy();
 
    // The last instance of the Hexfile class must also unregister the Win32
    // window class and unload the DLL library from init(). All class variables
@@ -1069,6 +1057,31 @@ void Hexfile::init(HINSTANCE pInstance, HWND pHandle, char *pTitle, int pIcon)
       // show() is called before data(), this will ensure the editor
       // functions properly until data() is called.
       SendMessage(HEX_child, HEXM_SETPOINTER, (WPARAM) &Dummy, 1);      
+   }
+}
+
+void Hexfile::destroy()
+//******************************
+// Undo the effects of the init() call by destroying the HEX editor
+// control and MDI child windows. This method should be called by the
+// component from On_destroy() to ensure no accidental memory references
+// to freed memory.
+{
+   // Destroying HEX_child will also destroy contained ShineInHex control
+   if(HEX_child) {
+      W32_ASSERT( DestroyWindow(HEX_child) );
+      HEX_child = NULL;
+   }
+
+   // Destroy MDI child window, activate the next MDI child, and request that
+   // the MDI client refreshes the "Windows" menu in the top-most VMLAB window
+   // to remove the destroyed MDI child.
+   if(MDI_child) {
+      SendMessage(MDI_client, WM_MDIDESTROY, (WPARAM) MDI_child, 0);
+      SendMessage(MDI_client, WM_MDINEXT, 0, 0);
+      SendMessage(MDI_client, WM_MDIREFRESHMENU, 0, 0);
+      W32_ASSERT( DrawMenuBar(VMLAB_window) );
+      MDI_child = NULL;
    }
 }
 
