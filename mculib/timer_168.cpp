@@ -707,10 +707,10 @@ void On_ICP_edge(LOGIC pState)
 //*****************************************************
 // Handle input capture
 {   
-   // Using ICR as TOP value disable input capture. Only trigger input capture
+   // Using ICR as TOP value disables input capture. Only trigger input capture
    // if the new input state is different from previous. This is needed because
    // (a) the comparator could send a double notify for the same state (once
-   // from On_register_write() and once form On_time_step()) and because
+   // from On_register_write() and once from On_time_step()) and because
    // (b) when setting ACIC=0 in ACSR, an input capture can be generated if
    // the ICP pin has a different value than the previous state in ICP_last
    if(Top != VAL_ICR && pState != ICP_last) {
