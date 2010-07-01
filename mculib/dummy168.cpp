@@ -28,7 +28,7 @@
 #include <stdio.h>
 
 #define IS_DUMMY_PERIPHERAL           // To distinguish from a normal user component
-#include "C:\VMLAB\bin\blackbox.h"
+#include "blackbox.h"
 #include "useravr.h"
 
 int WINAPI DllEntryPoint(HINSTANCE, unsigned long, void*) {return 1;} // is DLL
