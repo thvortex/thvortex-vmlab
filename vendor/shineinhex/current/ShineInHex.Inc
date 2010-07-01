@@ -61,8 +61,9 @@ UNDO ENDS
 
 HM struct
 	hWnd       				dd ? ; handle of control
-	screen_colors_st2  dd 4096*2  dup (?)
-	screen_colors_st3  dd 4096*2  dup (?)
+	screen_colors_st2		dd ? ; Pointer to color buffer
+	screen_colors_st3 		dd ? ; Pointer to color buffer
+	screen_colors_len		dd ? ; Size (in displayed chars) of color buffers (screen_colors_len * 8 + 8 = byte size of each buffer)
 	bk_color				dd 12 dup (?)
 	text_color				dd 12 dup (?)
 	rc1 					RECT <?> ; 1st stage rect
@@ -72,7 +73,6 @@ HM struct
 	main_rc   				RECT <?>
 	hex_popup      	   		dd ? ; main popup
 	hex_popupA              dd ? ; popup for Copy->
-	hex_popupB              dd ? ; popup for Dialogs->
 	update_st				dd ?
 	view_lenx  				dd ? ; number of characters that fits horizontally
 	view_leny 				dd ? ; number of characters that fits vertically
@@ -101,6 +101,8 @@ HM struct
 	is_readonly             dd ?
 	lf_choose				dd 5 dup (?)
 	undo_start				dd ?
+	find_hwnd				dd ? ; handle of "Find" dialog (if open)
+	select_hwnd				dd ? ; handle of "Select" dialog (if open)
 HM ends
 
 .const
@@ -148,7 +150,6 @@ HM ends
 	menui_redo      db "Redo",0
 	
 	menu_copy       db "Copy",0
-	menu_dialogs    db "Dialogs",0
 	
 	menui_copy_text db "Ansi",0
 	menui_copy_hex  db "Hex",0
@@ -157,8 +158,8 @@ HM ends
 	menui_copy_x01  db "\x00 sel",0
 	menui_copy_x02  db "\x00 ¬sel",0
 	
-	menui_find      db "Find",0
-	menui_select    db "Select",0
+	menui_find      db "Find...",0
+	menui_select    db "Select...",0
 	
 	error_hex      db "Need one more number",0
 	hex_byte       db 0

@@ -1,3 +1,7 @@
+; Author : Ramunas Cvirka AKA ramguru
+; Updated: 27/06/2010
+; Credits: major bugs fixed by Wojciech Stryjewski
+
 .686
 .model flat,stdcall
 option casemap:none
@@ -28,7 +32,7 @@ DummyProc proc uses esi edi hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 	; allocate two structures for saving unique properties
 	mov    edi, sizeof HM            ; control properties
 	add    edi, sizeof WndProcThunk  ; thunk code
-	invoke HeapAlloc, glob_heap, 0, edi
+	invoke HeapAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS or HEAP_ZERO_MEMORY, edi
 	mov    ecx, hWin
 	mov    HM.hWnd[eax], ecx
 	mov    esi, eax
@@ -41,8 +45,7 @@ DummyProc proc uses esi edi hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 	mov	   DWORD PTR [esi+0], 042444C7h ; sorta trick
 	mov	   DWORD PTR [esi+4], eax       ; sorta eax -> this
 	mov	   BYTE  PTR [esi+8], 0E9h      ; sorta jmp
-	mov	   DWORD PTR [esi+9], ecx       ; sorta relative proc addr
-		
+	mov	   DWORD PTR [esi+9], ecx       ; sorta relative proc addr	
 	invoke SetWindowLong, hWin, GWL_WNDPROC, esi
 	
 	; return pProc(hWnd, uMsg, wParam, lParam);
@@ -194,6 +197,15 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		mov    [HM.text_color+44][ebx], 070h
 		mov    HM.undo_start[ebx], 0
 		mov    HM.is_readonly[ebx], 0
+		mov    HM.find_hwnd[ebx], 0
+		mov    HM.select_hwnd[ebx], 0
+		
+		; Allocate smallest possible screen color buffer (1 * 8h + 8h = 10h)
+		mov    HM.screen_colors_len[ebx], 1h
+		invoke HeapAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, 10h
+		mov    HM.screen_colors_st2[ebx], eax
+		invoke HeapAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, 10h
+		mov    HM.screen_colors_st3[ebx], eax
 		
 		invoke CreateFontIndirect, ADDR lf1
 		mov    [HM.lf_choose+ 0][ebx], eax
@@ -210,8 +222,6 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		mov    HM.hex_popup[ebx], eax
 		invoke CreatePopupMenu
 		mov    HM.hex_popupA[ebx], eax
-		invoke CreatePopupMenu
-		mov    HM.hex_popupB[ebx], eax
 		
 		mov    eax, offset hexlook
 		mov    HM.pointer[ebx],   OFFSET hex_nl
@@ -229,9 +239,9 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		
 		invoke AppendMenu,  HM.hex_popup[ebx], MF_POPUP, HM.hex_popupA[ebx], ADDR menu_copy
 		
-		invoke AppendMenu,  HM.hex_popupB[ebx], MF_STRING, 13002, ADDR menui_find
-		invoke AppendMenu,  HM.hex_popupB[ebx], MF_STRING, 13003, ADDR menui_select
-		invoke AppendMenu,  HM.hex_popup[ebx], MF_POPUP, HM.hex_popupB[ebx], ADDR menu_dialogs
+		invoke AppendMenu,  HM.hex_popup[ebx], MF_SEPARATOR, 0, 0
+		invoke AppendMenu,  HM.hex_popup[ebx], MF_STRING, 13002, ADDR menui_find
+		invoke AppendMenu,  HM.hex_popup[ebx], MF_STRING, 13003, ADDR menui_select
 		
 		invoke SendMessage, HM.hWnd[ebx], HEXM_SETFONT, 0, 0
 
@@ -316,7 +326,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 	.elseif eax==HEXM_SETPOINTER
 		invoke ClearUndoBuf
 			
-		invoke HeapAlloc, glob_heap, 0, sizeof UNDO
+		invoke HeapAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, sizeof UNDO
 		mov    HM.undo_start[ebx], eax
 		mov    DWORD PTR [eax+ 0], 0
 		mov    DWORD PTR [eax+ 4], 0
@@ -357,6 +367,13 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		invoke InvalidateRect, HM.hWnd[ebx], 0, 0
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==HEXM_SETSEL
+		mov    eax, HM._size[ebx]
+		.if wParam > eax
+			mov    wParam, eax
+		.endif			
+		.if lParam > eax
+			mov    lParam, eax
+		.endif				
 		mov    eax, wParam
 		sub    eax, HM._start[ebx]
 		mov    HM.sel_start[ebx], eax
@@ -1165,9 +1182,19 @@ ttrack:
 		@exit:
 			invoke GlobalFree, hex_clip_copy
 		.elseif eax == 13002
-			invoke CreateDialogParamW, hInstance, 666, HM.hWnd[ebx], ADDR DlgFind, ebx
+			.if HM.find_hwnd[ebx]
+				invoke ShowWindow, HM.find_hwnd[ebx], SW_SHOW
+				invoke SetActiveWindow, HM.find_hwnd[ebx]
+			.else
+				invoke CreateDialogParamW, hInstance, 666, HM.hWnd[ebx], ADDR DlgFind, ebx
+			.endif
 		.elseif eax == 13003
-			invoke CreateDialogParam,  hInstance, 999, HM.hWnd[ebx], ADDR DlgSelect, ebx
+			.if HM.select_hwnd[ebx]
+				invoke ShowWindow, HM.select_hwnd[ebx], SW_SHOW
+				invoke SetActiveWindow, HM.select_hwnd[ebx]
+			.else
+				invoke CreateDialogParamW, hInstance, 999, HM.hWnd[ebx], ADDR DlgSelect, ebx
+			.endif
 		.elseif eax == 13004
 			invoke DoUndo
 			invoke InvalidateRect, HM.hWnd[ebx], 0, 0
@@ -1576,13 +1603,17 @@ ttrack:
 		xor    edx, edx
 		div    HM.view_lenx[ebx]
 		mov    line_count,  edx
-		mov    eax, [HM.screen_colors_st2+esi*8+0][ebx]
+		mov    eax, HM.screen_colors_st2[ebx]
+		mov    eax, [esi*8+0][eax]
 		mov    col1a, eax
-		mov    eax, [HM.screen_colors_st2+esi*8+4][ebx]
+		mov    eax, HM.screen_colors_st2[ebx]
+		mov    eax, [esi*8+4][eax]
 		mov    col2a, eax
-		mov    eax, [HM.screen_colors_st3+esi*8+0][ebx]
+		mov    eax, HM.screen_colors_st3[ebx]
+		mov    eax, [esi*8+0][eax]
 		mov    col1b, eax
-		mov    eax, [HM.screen_colors_st3+esi*8+4][ebx]
+		mov    eax, HM.screen_colors_st3[ebx]
+		mov    eax, [esi*8+4][eax]
 		mov    col2b, eax
 		mov    tem1, esi
 		xor    edx, edx
@@ -1612,8 +1643,9 @@ ttrack:
 		mov    eax, HM.view_lenx[ebx]
 		cmp    line_count, eax
 		jz     @str_out
-		mov    eax, [HM.screen_colors_st2+esi*8+0][ebx]
-		mov    ecx, [HM.screen_colors_st2+esi*8+4][ebx]
+		mov    eax, HM.screen_colors_st2[ebx]
+		mov    ecx, [esi*8+4][eax]
+		mov    eax, [esi*8+0][eax]
 		cmp    edi, tot_size
 		jz     @str_out
 		cmp    eax, col1a
@@ -1719,10 +1751,18 @@ ttrack:
 		invoke DeleteObject, [HM.lf_choose+16][ebx]
 		invoke DeleteDC,      HM.mdc[ebx]
 		invoke DestroyMenu,  [HM.hex_popupA][ebx]
-		invoke DestroyMenu,  [HM.hex_popupB][ebx]
 		invoke DestroyMenu,  [HM.hex_popup][ebx]
+      
+		.if HM.find_hwnd[ebx]
+			invoke DestroyWindow, HM.find_hwnd[ebx]
+		.endif
+		.if HM.select_hwnd[ebx]
+			invoke DestroyWindow, HM.select_hwnd[ebx]
+		.endif
 	
 	.elseif eax==WM_NCDESTROY
+		invoke HeapFree, glob_heap, 0, HM.screen_colors_st2[ebx]
+		invoke HeapFree, glob_heap, 0, HM.screen_colors_st3[ebx]
 		invoke HeapFree, glob_heap, 0, ebx
 		
 	.else
@@ -1767,7 +1807,7 @@ AllocUndo proc
 	LOCAL pUndo:DWORD
 		
 	mov    HM.can_undo[ebx], 1
-	invoke HeapAlloc, glob_heap, 0, sizeof UNDO
+	invoke HeapAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, sizeof UNDO
 	mov    pUndo, eax
 	mov    ecx, HM.undo_start[ebx]
 	mov    edx, DWORD PTR [ecx+12]
@@ -1799,7 +1839,7 @@ AllocUndo proc
 	inc    ecx
 	@@:
 	mov    DWORD PTR [eax+ 4], ecx
-	invoke HeapAlloc, glob_heap, 0, ecx
+	invoke HeapAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, ecx
 	mov    ecx, pUndo
 	mov    DWORD PTR [ecx+0], eax
 	mov    edi, eax
@@ -2162,8 +2202,6 @@ SetScreenColors proc uses edi
 	LOCAL sc_start:DWORD
 	LOCAL sc_end:DWORD
 
-	lea    esi, HM.screen_colors_st2[ebx]
-	lea    edi, HM.screen_colors_st3[ebx]
 	mov    ecx, HM.pointer[ebx]
 	mov    eax, HM.vscrollpos[ebx]
 	mul    HM.view_lenx[ebx]
@@ -2181,6 +2219,29 @@ SetScreenColors proc uses edi
 	mov    sc_end, ecx
 	mov    ecx, sc_end
 	sub    ecx, sc_start	
+
+	; Reallocate screen color buffers as needed to support large window sizes
+	; Buffer size in bytes = (screen_colors_len * 8 + 8) The "+ 8" avoids a
+	; buffer overflow when the cursor moves 1 position past the last hex byte
+	.if ecx > HM.screen_colors_len[ebx]
+		mov    HM.screen_colors_len[ebx], ecx
+		shl    ecx, 3
+		add    ecx, 8 
+		invoke HeapReAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, HM.screen_colors_st2[ebx], ecx
+		mov    HM.screen_colors_st2[ebx], eax
+
+		mov    ecx, HM.screen_colors_len[ebx]
+		shl    ecx, 3
+		add    ecx, 8
+		invoke HeapReAlloc, glob_heap, HEAP_GENERATE_EXCEPTIONS, HM.screen_colors_st3[ebx], ecx
+		mov    HM.screen_colors_st3[ebx], eax
+
+		mov    ecx, HM.screen_colors_len[ebx]
+	.endif
+	
+	mov    esi, HM.screen_colors_st2[ebx]
+	mov    edi, HM.screen_colors_st3[ebx]
+
 	; HIGHLIGHTING OF THE LOWEST PRIO. - normal bk, normal text
   @@:
 	dec    ecx
@@ -2219,8 +2280,8 @@ SetScreenColors proc uses edi
 	jmp    @B
   @@:
 	; HIGHLIGHTING OF BIGGER PRIO. - cursor pos
-	lea    esi, HM.screen_colors_st2[ebx]
-	lea    edi, HM.screen_colors_st3[ebx]
+	mov    esi, HM.screen_colors_st2[ebx]
+	mov    edi, HM.screen_colors_st3[ebx]
 	mov    ecx, HM.sel_start[ebx]
 	mov    edx, HM.sel_end[ebx]
 	cmp    ecx, edx
@@ -2366,6 +2427,9 @@ DlgFind proc uses esi edi hDlg:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 		invoke SetWindowLong, hDlg, GWL_USERDATA, lParam
 		invoke SetLayeredWindowAttributes, hDlg, 0, 255, LWA_ALPHA
 		invoke ShowWindow, hDlg, SW_SHOW
+		mov    eax, lParam
+		mov    ecx, hDlg
+		mov    HM.find_hwnd[eax], ecx
 	.elseif eax == WM_COMMAND
 		invoke IsDlgButtonChecked, hDlg, 705
 		mov    reversed, eax
@@ -2481,14 +2545,19 @@ DlgFind proc uses esi edi hDlg:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 			.else
 				invoke SetLayeredWindowAttributes, hDlg, 0, 255, LWA_ALPHA
 			.endif
+		.elseif eax == 708
+			invoke EndDialog, hDlg, 0
+		.else
+			xor	eax, eax
+			ret
 		.endif
 	.elseif eax == WM_CLOSE
-		invoke DestroyWindow, hDlg
+		invoke EndDialog, hDlg, 0
 	.else
-		xor    eax, eax
+		xor	eax, eax
 		ret
 	.endif
-	mov    eax, 0
+	mov	eax, 1
 	ret
 DlgFind endp
 
@@ -2501,6 +2570,10 @@ DlgSelect proc hDlg:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 	mov    eax, uMsg
 	.if eax == WM_INITDIALOG
 		invoke SetWindowLong, hDlg, GWL_USERDATA, lParam
+		invoke ShowWindow, hDlg, SW_SHOW
+		mov    eax, lParam
+		mov    ecx, hDlg
+		mov    HM.select_hwnd[eax], ecx
 	.elseif eax == WM_COMMAND
 		.if wParam == 805
 			invoke SendDlgItemMessage, hDlg, 801, WM_GETTEXT, 9, ADDR s_offs
@@ -2511,6 +2584,8 @@ DlgSelect proc hDlg:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 			mov    E_OFFS, eax
 			invoke GetWindowLong, hDlg, GWL_USERDATA
 			invoke SendMessage, HM.hWnd[eax], HEXM_SETSEL, S_OFFS, E_OFFS
+			invoke EndDialog, hDlg, 0
+		.elseif wParam == 806
 			invoke EndDialog, hDlg, 0
 		.endif
 	.elseif eax == WM_CLOSE
