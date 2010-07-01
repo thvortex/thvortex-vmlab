@@ -30,8 +30,8 @@ BEGIN
    CONTROL "Cancel", 806, BUTTON, BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 66, 41, 39, 12 
 END
 1 VERSIONINFO
-FILEVERSION 1,4,0,0
-PRODUCTVERSION 1,4,0,0
+FILEVERSION 1,5,0,0
+PRODUCTVERSION 1,5,0,0
 FILEOS 0x00000004
 FILETYPE 0x00000001
 BEGIN
@@ -41,11 +41,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "ramguru\0"
       VALUE "FileDescription", "HEX edit/view control\0"
-      VALUE "FileVersion", "1.4F\0"
-      VALUE "LegalCopyright", "Copyright © ramguru 2006-2007\0"
+      VALUE "FileVersion", "1.5F\0"
+      VALUE "LegalCopyright", "Copyright © ramguru 2006-2010\0"
       VALUE "OriginalFilename", "ShineInHex.dll\0"
       VALUE "ProductName", "ShineInHex\0"
-      VALUE "ProductVersion", "1.4F\0"
+      VALUE "ProductVersion", "1.5F\0"
     END
   END
   BLOCK "VarFileInfo"

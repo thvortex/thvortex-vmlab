@@ -1,3 +1,7 @@
+; Author : Ramunas Cvirka AKA ramguru
+; Updated: 27/06/2010
+; Credits: major bugs fixed by Wojciech Stryjewski
+
 .686
 .model flat,stdcall
 option casemap:none
