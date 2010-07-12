@@ -1,0 +1,111 @@
+// =============================================================================
+// Component Name: AVR analog to digital converter peripheral
+//
+// Copyright (C) 2010 Wojciech Stryjewski <thvortex@gmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation; either version 2.1 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+//
+// =============================================================================
+
+#include <windows.h>
+#include <commctrl.h>
+#define IS_PERIPHERAL 1
+#ifndef RC_INVOKED
+#define RC_INVOKED 1
+#endif
+#include <blackbox.h>  // File located in <VMLAB install dir>/bin
+#include "version.h"
+#include "adc.h"
+
+// Syntax to add/modify new controls
+// *********************************
+//
+// CONTROL <text>, <gadget ID>, <class>, <styles>, <left>, <top>, <width>, <height>
+//
+//    <text>: Any text; this will be displayed in the control (if applies).
+//    <gadget ID>: A value, GADGET0 to GADGET31, or -1 for non-modifiable controls
+//       (decorations, texts, etc)
+//    <class>: A Win32 standard control class name: "button", "static", "listbox", etc.
+//       or... own custom-class name (for advanced Win32 users)
+//    <styles>: A valid Win32 attribute/style for the control.
+//    <left>, <top>, <width>, <height>: Coordinates in dialog units (not pixels!)
+
+
+// Register displays must be always be coded with the "WORD_8_VIEW_c" class name.
+//
+WINDOW_USER_1 DIALOG 0, 0, WIDTH, 87
+STYLE WS_CHILD | WS_VISIBLE
+FONT 8, "MS Sans Serif"
+{
+   CONTROL "", EXPAND_FRAME, "button", BS_GROUPBOX | WS_CHILD | WS_VISIBLE | WS_GROUP, 2, 0, WIDTH - 6, 85 
+   CONTROL "", EXPAND_BUTTON, "button", BS_AUTOCHECKBOX | BS_PUSHLIKE | WS_CHILD | WS_VISIBLE, 7, 0, 8, 8 
+
+   CONTROL "%", GDT_ADCSRA + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 13, 29, 8 
+   CONTROL "",  GDT_ADCSRA, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 12, 42, 10 
+   CONTROL "%", GDT_ADCH + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 79, 13, 29, 8 
+   CONTROL "",  GDT_ADCH, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 106, 12, 42, 10 
+   CONTROL "%", GDT_ADCSRB + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 25, 29, 8 
+   CONTROL "",  GDT_ADCSRB, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 24, 42, 10 
+   CONTROL "%", GDT_ADCL + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 79, 25, 29, 8 
+   CONTROL "",  GDT_ADCL, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 106, 24, 42, 10 
+   CONTROL "%", GDT_DIDR + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 37, 29, 8 
+   CONTROL "?", GDT_DIDR, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 36, 42, 10 
+   CONTROL "%", GDT_ADMUX + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 79, 37, 29, 8 
+   CONTROL "",  GDT_ADMUX, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 106, 36, 42, 10 
+
+   CONTROL "????", GDT_LIN, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 79, 49, 29, 8 
+   CONTROL "????", GDT_LREF, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 79, 61, 29, 8 
+   CONTROL "? V", GDT_VIN, "static", SS_CENTER | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 106, 48, 42, 10 
+   CONTROL "? V", GDT_VREF, "static", SS_CENTER | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 106, 60, 42, 10 
+
+   CONTROL "In", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 149, 49, 16, 8 
+   CONTROL "Ref", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 149, 61, 16, 8 
+
+   CONTROL "Clock:", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 61, 28, 10 
+   CONTROL "?", GDT_CLOCK, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 26, 61, 50, 10 
+   CONTROL "Status:", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 73, 24, 10 
+   CONTROL "?", GDT_STATUS, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 28, 73, 80, 10 
+
+   CONTROL "BLK", GDT_BLOCK, "button", BS_CHECKBOX | BS_PUSHLIKE | WS_CHILD | WS_VISIBLE, 149, 12, 15, 10 
+   CONTROL "BUF", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 150, 27, 16, 8 
+   CONTROL "$??", GDT_BUF, "static", SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 149, 36, 15, 10 
+   
+   CONTROL "Log", GDT_LOG, "button", BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE, 137, 73, 25, 8 
+}
+
+// Info displayed under "Version" tab in Windows Explorer. Due to a serious bug
+// in the Borland RC compiler, all values must end with an explicit NULL.
+1 VERSIONINFO
+FILEVERSION       MCULIB_FILEVERSION
+PRODUCTVERSION    MCULIB_PRODUCTVERSION
+FILEOS            VOS__WINDOWS32
+FILETYPE          VFT_DLL
+{
+   BLOCK "StringFileInfo"
+   {
+      BLOCK "040904E4"
+      {
+         VALUE "CompanyName",      "Wojciech Stryjewski\0"
+         VALUE "FileDescription",  "AVR A/D Converter\0"
+         VALUE "FileVersion",      MCULIB_FILEVERSION_STR
+         VALUE "InternalName",     "ADC\0"
+         VALUE "LegalCopyright",   "2010, GNU LGPL v2.1+\0"
+         VALUE "OriginalFilename", "adc.dll\0"
+         VALUE "ProductName",      "VMLAB\0"
+         VALUE "ProductVersion",   MCULIB_PRODUCTVERSION_STR
+      }
+   }
+   BLOCK "VarFileInfo" { VALUE "Translation", 0x0409 0x04E4 }
+}
