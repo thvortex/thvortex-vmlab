@@ -29,7 +29,7 @@
 // ******************
 //
 #define W_CELL 251  // Width imposed by the expandable window where to fit. DO NOT modify
-#define H_CELL 54   // Modify only the height if necessary
+#define H_CELL 52   // Modify only the height if necessary
 
 // Syntax, to add/modify new controls
 // **********************************
@@ -65,9 +65,11 @@ FONT 8, "MS Sans Serif"
    CONTROL "EEPROM Address", -1, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE, 6, 12, 60, 10 
    CONTROL "$?????", GDT_ADDR, STATIC, SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE, 68, 12, 27, 10 
 
-   CONTROL "View", GDT_VIEW, BUTTON, BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_DISABLED | WS_TABSTOP, 122, 11, 26, 12 
+   CONTROL "", -1, "static", SS_ETCHEDVERT | WS_CHILD | WS_VISIBLE, 118, 9, 1, 38
+   
+   CONTROL "View", GDT_VIEW, BUTTON, BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 122, 11, 26, 12 
    CONTROL "Load", GDT_LOAD, BUTTON, BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 155, 11, 26, 12 
-   CONTROL "Save", GDT_SAVE, BUTTON, BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 183, 11, 26, 12 
+   CONTROL "Save", GDT_SAVE, BUTTON, BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 184, 11, 26, 12 
    CONTROL "Erase", GDT_ERASE, BUTTON, BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 217, 11, 26, 12 
    
    CONTROL "Break on error", GDT_BREAK, BUTTON, BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 122, 36, 63, 8 
@@ -120,12 +122,12 @@ FILETYPE          VFT_DLL
       {
          VALUE "CompanyName",      "Wojciech Stryjewski\0"
          VALUE "FileDescription",  "I2C 24xxx Serial EEPROM\0"
-         VALUE "FileVersion",      "v0.1\0"
+         VALUE "FileVersion",      "v1.0\0"
          VALUE "InternalName",     "EEPROM24\0"
          VALUE "LegalCopyright",   "2009-2010, GNU LGPL v2.1+\0"
          VALUE "OriginalFilename", "eeprom24.dll\0"
          VALUE "ProductName",      "VMLAB\0"
-         VALUE "ProductVersion",   "3.15B\0"
+         VALUE "ProductVersion",   "3.15\0"
       }
    }
    BLOCK "VarFileInfo" { VALUE "Translation", 0x0409 0x04E4 }
