@@ -1,5 +1,5 @@
 // =============================================================================
-// Component Name: eeprom24 v0.1
+// Component Name: eeprom24 v1.0
 //
 // Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
 //
@@ -72,8 +72,8 @@ FONT 8, "MS Sans Serif"
    CONTROL "Save", GDT_SAVE, BUTTON, BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 184, 11, 26, 12 
    CONTROL "Erase", GDT_ERASE, BUTTON, BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 217, 11, 26, 12 
    
-   CONTROL "Break on error", GDT_BREAK, BUTTON, BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 122, 36, 63, 8 
    CONTROL "Log", GDT_LOG, BUTTON, BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 218, 36, 27, 8 
+   CONTROL "Break on error", GDT_BREAK, BUTTON, BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 122, 36, 63, 8 
 }
 
 // Info for use in User Library Browser
