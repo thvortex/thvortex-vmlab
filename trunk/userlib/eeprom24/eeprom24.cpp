@@ -34,7 +34,7 @@
 // file "<Name>.eep".
 //
 // Version History:
-// v1.0 2010/7/16/ - Initial public release
+// v1.0 2010/7/17/ - Initial public release
 //
 // Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
 //
