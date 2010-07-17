@@ -52,6 +52,11 @@ private:
    char Dummy;      // Dummy data for editor because HEXM_UNSETPOINTER is buggy
 
 public:
+   // File types which are passed as the 2nd argument to the load() and
+   // save() functions. Note that these enum values must correspond to
+   // the OPENFILENAME_FILTER string in hexfile.cpp.
+   enum { FT_HEX = 1, FT_SREC, FT_GEN, FT_BIN };
+   
    Hexfile();
    ~Hexfile();
 
@@ -62,6 +67,8 @@ public:
    void erase();
    void load();
    void save();
+   void load(char *pFile, int pType);
+   void save(char *pFile, int pType);
 
    void hide();
    void show();
