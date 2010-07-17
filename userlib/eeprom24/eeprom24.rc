@@ -77,12 +77,13 @@ FONT 8, "MS Sans Serif"
 }
 
 // Info for use in User Library Browser
-INFO_BITMAP BITMAP "eeprom24.bmp"
+// TODO: Replace with INFO_XXX CONSTANTS once VMLAB 3.16 is released
+501 BITMAP "eeprom24.bmp"
 STRINGTABLE
 {
-   INFO_DESCRIPTION, "I2C 24xxx Serial EEPROM"
-   INFO_TEMPLATE, "X[<Name>] _eeprom24 <MemorySize> <PageSize> [<Delay> <Address> <Mask>] <SDA> <SCL>"
-   INFO_USAGE,
+   502, "I2C 24xxx Serial EEPROM"
+   503, "X[<Name>] _eeprom24 <MemorySize> <PageSize> [<Delay> <Address> <Mask>] <SDA> <SCL>"
+   504,
 "The <SDA> and <SCL> pins are respectively the serial data and serial clock\
 used by the I2C bus. The <MemorySize> parameter specifies the total EEPROM\
 size in bytes, and the <PageSize> parameter specifies the maximum number of\
