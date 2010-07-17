@@ -50,19 +50,17 @@
 // the SHINEINHEX child window class
 #define CLASS_NAME "VMLAB Hexfile Editor"
 
-// String assigned to the lpstrFilter field of the OPENFILENAME structure. Used
-// by the "Open" and "Save" dialog boxes to display the pull-down list of
-// supported file types
+// String assigned to the lpstrFilter field of the OPENFILENAME structure.
+// Used by the "Open" and "Save" dialog boxes to display the pull-down list of
+// supported file types. These strings must be in the same order as the public
+// enum in hexfile.h so so that the return value from GetOpenFileName() and
+// GetSaveFileName() functions directly corresponds to the enum.
 #define OPENFILENAME_FILTER \
    "Intel HEX (*.eep; *.hex)\0*.eep;*.hex\0" \
    "Motorola S-Record (*.s19)\0*.s19\0" \
    "Atmel Generic 16/8 (*.gen)\0*.gen\0" \
    "Raw Binary (*.*)\0*.*\0"
 
-// File types corresponding to the OPENFILENAME_FILTER string. These are
-// returned by the GetOpenFileName() and GetSaveFileName() functions.
-enum { FT_HEX = 1, FT_SREC, FT_GEN, FT_BIN };
-   
 // Error message displayed when loading memory image from larger EEPROM
 #define FILEERROR_TOOBIG \
    "File uses higher addresses than supported by current EEPROM\n" \
@@ -1175,6 +1173,38 @@ void Hexfile::readonly(bool pReadOnly)
    InvalidateRect(HEX_child, NULL, true);
 }   
 
+void Hexfile::load(char *pFile, int pType)
+//******************************
+// Given the filename in "pFile" and the file type (one of the FT_HEX,
+// FT_SREC, etc. enums) in "pType", attempt to load the memory image file
+// into memory and immediately refresh the hex editor to show the new data.
+{
+   // Initialize EEPROM contents to fully erased (0xFF) state
+   // before loading data so that any unspecified "holes" in the
+   // file's address space end up as $FF
+   memset(Pointer, 0xFF, Size);
+
+   // If an I/O error occurs, the File class will throw an exception
+   // to abort the operation. The EEPROM memory may be partially
+   // initialized if only part of the input file was read.
+   try {
+      switch(pType) {
+         case FT_HEX:  Read_HEX(Pointer, Size, pFile); break;
+         case FT_SREC: Read_SREC(Pointer, Size, pFile); break;
+         case FT_GEN:  Read_GEN(Pointer, Size, pFile); break;
+         case FT_BIN:  Read_BIN(Pointer, Size, pFile); break;
+         default:
+            File_Error(pFile, MB_ICONERROR,
+               "Invalid file type in Hexfile::load()");
+            break;
+      }
+      
+      // Force a redraw of the hex editor window to show new data
+      refresh();
+   }
+   catch (File::Error) {}
+}
+
 void Hexfile::load()
 //******************************
 // Display common "Open" dialog box so the user can select a memory image file
@@ -1203,28 +1233,33 @@ void Hexfile::load()
       OFN_PATHMUSTEXIST;             // Directory locations must already exist
 
    // If the user clicks "OK" button, attempt loading from the file
-   if(GetOpenFileName(&dlg)) {    
-      // Initialize EEPROM contents to fully erased (0xFF) state
-      // before loading data so that any unspecified "holes" in the
-      // file's address space end up as $FF
-      memset(Pointer, 0xFF, Size);
-
-      // If an I/O error occurs, the File class will throw an exception
-      // to abort the operation. The EEPROM memory may be partially
-      // initialized if only part of the input file was read.
-      try {
-         switch(dlg.nFilterIndex) {
-            case FT_HEX:  Read_HEX(Pointer, Size, pathBuffer); break;
-            case FT_SREC: Read_SREC(Pointer, Size, pathBuffer); break;
-            case FT_GEN:  Read_GEN(Pointer, Size, pathBuffer); break;
-            case FT_BIN:  Read_BIN(Pointer, Size, pathBuffer); break;
-         }
-         
-         // Force a redraw of the hex editor window to show new data
-         refresh();
-      }
-      catch (File::Error) {}
+   if(GetOpenFileName(&dlg)) {
+      load(pathBuffer, dlg.nFilterIndex);
    }
+}
+
+void Hexfile::save(char *pFile, int pType)
+//******************************
+// Given the filename in "pFile" and the file type (one of the FT_HEX,
+// FT_SREC, etc. enums) in "pType", attempt to write the memory contents
+// into a memory image file.
+{
+   // If an I/O error occurs, the File class will throw an exception
+   // to abort the operation. The output file will have been partially
+   // written at this point.
+   try {
+      switch(pType) {
+         case FT_HEX:  Write_HEX(Pointer, Size, pFile); break;
+         case FT_SREC: Write_SREC(Pointer, Size, pFile); break;
+         case FT_GEN:  Write_GEN(Pointer, Size, pFile); break;
+         case FT_BIN:  Write_BIN(Pointer, Size, pFile); break;
+         default:
+            File_Error(pFile, MB_ICONERROR,
+               "Invalid file type in Hexfile::load()");
+            break;
+      }
+   }
+   catch (File::Error) {}
 }
 
 void Hexfile::save()
@@ -1254,18 +1289,7 @@ void Hexfile::save()
 
    // If the user clicks "OK" button, attempt saving to the file      
    if(GetSaveFileName(&dlg)) {         
-      // If an I/O error occurs, the File class will throw an exception
-      // to abort the operation. The output file will have been partially
-      // written at this point.
-      try {
-         switch(dlg.nFilterIndex) {
-            case FT_HEX:  Write_HEX(Pointer, Size, pathBuffer); break;
-            case FT_SREC: Write_SREC(Pointer, Size, pathBuffer); break;
-            case FT_GEN:  Write_GEN(Pointer, Size, pathBuffer); break;
-            case FT_BIN:  Write_BIN(Pointer, Size, pathBuffer); break;
-         }
-      }
-      catch (File::Error) {}
+      save(pathBuffer, dlg.nFilterIndex);
    }      
 }
 
