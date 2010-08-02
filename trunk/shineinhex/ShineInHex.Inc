@@ -70,12 +70,12 @@ HM struct
 	rc2 					RECT <?> ; 2nd stage rect
 	rc3 					RECT <?> ; 3rd stage rect
 	sel_rc 					RECT <?> ; 2-3 stage rect
-	main_rc   				RECT <?>
+	main_rc   				RECT <?> ; client area rect
 	hex_popup      	   		dd ? ; main popup
 	hex_popupA              dd ? ; popup for Copy->
 	update_st				dd ?
-	view_lenx  				dd ? ; number of characters that fits horizontally
-	view_leny 				dd ? ; number of characters that fits vertically
+	view_lenx  				dd ? ; number of characters that fits horizontally (per stage)
+	view_leny 				dd ? ; number of characters that fits vertically (excluding header)
 	vscrollpos 				dd ? ; current sinfo.nPos
 	byte_nr    				dd ?
 	_size      				dd ? ; size of data
