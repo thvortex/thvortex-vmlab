@@ -2293,15 +2293,11 @@ SetScreenColors proc uses edi
 	cmp    edx, sc_start
 	jb     @no_sel
 	sub    edx, sc_start
-	mov    eax, [HM.bk_color  +16][ebx]
-	xor    eax, 0ffffffh
-	mov    DWORD PTR [esi+edx*8+0], eax
 	mov    eax, [HM.bk_color  +32][ebx]
+	mov    DWORD PTR [esi+edx*8+0], eax
 	mov    DWORD PTR [edi+edx*8+0], eax
-	mov    eax, [HM.text_color+16][ebx]
-	xor    eax, 0ffffffh
-	mov    DWORD PTR [esi+edx*8+4], eax
 	mov    eax, [HM.text_color+32][ebx]
+	mov    DWORD PTR [esi+edx*8+4], eax
 	mov    DWORD PTR [edi+edx*8+4], eax
 	jmp    @no_sel
 	; HIGHLIGHTING OF THE BIGGEST PRIO. - selection
