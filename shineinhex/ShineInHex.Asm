@@ -417,6 +417,12 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		invoke SetScreenColors
 		invoke InvalidateRect, HM.hWnd[ebx], 0, 0
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+	.elseif eax==HEXM_SETCOLPOINTER
+		m2m    HM.bk_color_pointer[ebx], wParam
+		m2m    HM.text_color_pointer[ebx], lParam
+		invoke SetScreenColors
+		invoke InvalidateRect, HM.hWnd[ebx], 0, 0
+;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==WM_CHAR
 		cmp    HM.is_readonly[ebx], 1
 		jz     @sel_done
@@ -2198,7 +2204,7 @@ DrawOffset proc
 	ret
 DrawOffset endp
 
-SetScreenColors proc uses edi
+SetScreenColors proc uses edi esi
 	LOCAL col1B:DWORD
 	LOCAL col1T:DWORD
 	LOCAL sc_start:DWORD
@@ -2243,43 +2249,79 @@ SetScreenColors proc uses edi
 	
 	mov    esi, HM.screen_colors_st2[ebx]
 	mov    edi, HM.screen_colors_st3[ebx]
+	xor    edx, edx
+	
+	; HIGHLIGHTING OF THE LOWEST PRIO. - normal bk
+	.if HM.bk_color_pointer[ebx]
+		mov    edx, sc_start
+		shl    edx, 2
+		add    edx, HM.bk_color_pointer[ebx]
+		@@:
+		dec    ecx
+		mov    eax, [edx+ecx*4]
+		mov    DWORD PTR [esi+ecx*8+0], eax
+		mov    DWORD PTR [edi+ecx*8+0], eax
+		test   ecx, ecx
+		jnz    @B
+    .else
+		@@:
+		dec    ecx
+		mov    eax, [HM.bk_color  +16][ebx]
+		mov    DWORD PTR [esi+ecx*8+0], eax
+		mov    eax, [HM.bk_color  +20][ebx]
+		mov    DWORD PTR [edi+ecx*8+0], eax
+		test   ecx, ecx
+		jnz    @B
+	.endif
 
-	; HIGHLIGHTING OF THE LOWEST PRIO. - normal bk, normal text
-  @@:
-	dec    ecx
-	mov    eax, ecx
-	add    eax, sc_start
-	mov    eax, [HM.bk_color  +16][ebx]
-	mov    DWORD PTR [esi+ecx*8+0], eax
-	mov    eax, [HM.bk_color  +20][ebx]
-	mov    DWORD PTR [edi+ecx*8+0], eax
-	mov    eax, [HM.text_color+16][ebx]
-	mov    DWORD PTR [esi+ecx*8+4], eax
-	mov    eax, [HM.text_color+20][ebx]
-	mov    DWORD PTR [edi+ecx*8+4], eax
-	test   ecx, ecx
-	jnz    @B
-	; HIGHLIGHTING OF BIGGER PRIO. - modified bytes
-	mov    ecx, HM.modified_counter[ebx]
-  @@:
-	test   ecx, ecx
-	jz     @F
-	;xor    edx, edx
-	dec    ecx
-	mov    eax, ecx
-	shr    eax, 3
-	mov    edi, [HM.modified_bytes+ecx*4][ebx]
-	cmp    edi, sc_end
-	ja     @next_byte
-	cmp    edi, sc_start
-	jb     @next_byte
-	sub    edi, sc_start
-	mov    edx, [HM.bk_color  +eax*4+36][ebx]
-	mov    DWORD PTR [esi+edi*8+0], edx
-	mov    edx, [HM.text_color+eax*4+36][ebx]
-	mov    DWORD PTR [esi+edi*8+4], edx
-  @next_byte:
-	jmp    @B
+	mov    ecx, HM.screen_colors_len[ebx]
+	
+	; HIGHLIGHTING OF THE LOWEST PRIO. - normal text
+	.if HM.text_color_pointer[ebx]
+		mov    edx, sc_start
+		shl    edx, 2
+		add    edx, HM.text_color_pointer[ebx]
+		@@:
+		dec    ecx
+		mov    eax, [edx+ecx*4]
+		mov    DWORD PTR [esi+ecx*8+4], eax
+		mov    DWORD PTR [edi+ecx*8+4], eax
+		test   ecx, ecx
+		jnz    @B
+	.else
+		@@:
+		dec    ecx
+		mov    eax, [HM.text_color+16][ebx]
+		mov    DWORD PTR [esi+ecx*8+4], eax
+		mov    eax, [HM.text_color+20][ebx]
+		mov    DWORD PTR [edi+ecx*8+4], eax
+		test   ecx, ecx
+		jnz    @B
+	.endif
+	
+	; HIGHLIGHTING OF BIGGER PRIO. - modified bytes (only if not using custom color tables)
+	.if edx == 0
+		mov    ecx, HM.modified_counter[ebx]
+		@@:
+		test   ecx, ecx
+		jz     @F
+		dec    ecx
+		mov    eax, ecx
+		shr    eax, 3
+		mov    edi, [HM.modified_bytes+ecx*4][ebx]
+		cmp    edi, sc_end
+		ja     @next_byte
+		cmp    edi, sc_start
+		jb     @next_byte
+		sub    edi, sc_start
+		mov    edx, [HM.bk_color  +eax*4+36][ebx]
+		mov    DWORD PTR [esi+edi*8+0], edx
+		mov    edx, [HM.text_color+eax*4+36][ebx]
+		mov    DWORD PTR [esi+edi*8+4], edx
+		@next_byte:
+		jmp    @B
+	.endif
+	
   @@:
 	; HIGHLIGHTING OF BIGGER PRIO. - cursor pos
 	mov    esi, HM.screen_colors_st2[ebx]
