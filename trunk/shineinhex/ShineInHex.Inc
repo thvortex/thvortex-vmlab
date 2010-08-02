@@ -128,6 +128,7 @@ HM ends
 	HEXM_CANUNDO		  equ WM_USER+119 ;{wParam-0}	        	{lParam-0}
 	HEXM_CANREDO          equ WM_USER+120 ;{wParam-0}	        	{lParam-0}
 	HEXM_SETREADONLY      equ WM_USER+121 ;{wParam-is_readonly: 1,0}{lParam-0}
+	HEXM_INVALIDATE       equ WM_USER+122 ;{wParam-start_offs}      {lParam-end_offset}
 .data
 	ALIGN 4
 	measure_x db "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",0
