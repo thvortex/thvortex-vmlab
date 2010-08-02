@@ -305,7 +305,6 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		mov    HM.rc2.bottom[ebx], eax
 		mov    HM.rc3.bottom[ebx], eax
 		invoke ReleaseDC, HM.hWnd[ebx], dc
-		invoke SendMessage, HM.hWnd[ebx], WM_SETFOCUS, 0, 0
 		mov    sinfo.fMask, 0
 		jmp    @resize
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
@@ -347,7 +346,6 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		mov    ecx, lParam
 		mov    HM.pointer[ebx], eax
 		mov    HM._size[ebx],   ecx
-		invoke SendMessage,   HM.hWnd[ebx], WM_SETFOCUS, 0, 0
 		invoke GetClientRect, HM.hWnd[ebx], ADDR rc
 	@resize:
 		mov    HM.view_lenx[ebx], 4
