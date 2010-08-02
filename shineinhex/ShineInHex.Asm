@@ -413,6 +413,10 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		mov    HM.is_readonly[ebx], eax
 		ret
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+	.elseif eax==HEXM_INVALIDATE
+		invoke SetScreenColors
+		invoke InvalidateRect, HM.hWnd[ebx], 0, 0
+;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==WM_CHAR
 		cmp    HM.is_readonly[ebx], 1
 		jz     @sel_done
