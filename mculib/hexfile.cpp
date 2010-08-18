@@ -78,6 +78,14 @@
 // Confirmation question displayed when the erase() function is called
 #define CONFIRM_ERASE \
    "Are you sure you want to erase entire EEPROM memory to $FF?"
+
+// Added to hex editor's context menu when a bitflag buffer is in use
+#define CLEAR_COVERAGE "Clear R/W coverage"
+
+// Background colors used for tracking read/write coverage in hex editor
+const COLORREF COLOR_R  = RGB(255, 255, 0);   // Yellow
+const COLORREF COLOR_W  = RGB(0, 255, 255);   // Cyan
+const COLORREF COLOR_RW = RGB(127, 255, 127); // Light green
    
 // Initial size of MDI child window (not client area)
 enum { INIT_WIDTH = 629, INIT_HEIGHT = 305 };
@@ -109,7 +117,40 @@ enum {
    HEXM_CANUNDO		    = WM_USER+119,
    HEXM_CANREDO          = WM_USER+120,
    HEXM_SETREADONLY      = WM_USER+121,
+   HEXM_INVALIDATE       = WM_USER+122,
+   HEXM_GETMENU          = WM_USER+123,
 };
+
+// Notification codes (NMHDR.code) used with WM_NOTIFY message sent to parent
+enum {
+   HEXN_SHOWMENU         = 100,
+   HEXN_CUSTOMCOLORS     = 101,
+};
+
+// ID numbers for custom menu items installed in hex editor's context menu
+enum {
+   IDM_CLEAR_RW     = 20000,
+   IDM_CLEAR_RW_SEP = 20001,
+};
+
+// Structure used with the HEXN_SHOWMENU notification
+typedef struct {
+   NMHDR hdr;       // Common WM_NOTIFY header
+   HMENU menu;      // Handle to the pop-up context menu
+} HEXNM_MENU;
+
+// Structure used with the HEXN_CUSTOMCOLORS notification
+typedef struct {
+   struct BUFFER {
+      COLORREF back;
+      COLORREF fore;
+   };
+   NMHDR hdr;       // Common WM_NOTIFY header
+   BUFFER *colors_hex;   // Color buffer for hex portion
+   BUFFER *colors_ansi;  // Color buffer for text portion
+   UINT sc_start;   // Offset of first visible byte in hex editor
+   UINT sc_end;     // Offset of last visible byte in hex editor
+} HEXNM_COLORS;
 
 // =============================================================================
 // Global Variables
@@ -234,7 +275,7 @@ void Hide(HWND pWindow)
    W32_ASSERT( DrawMenuBar(VMLAB_window) );   
 }
 
-LRESULT CALLBACK MDI_proc(HWND pWindow, UINT pMessage, WPARAM pW, LPARAM pL)
+LRESULT CALLBACK Hexfile::MDI_proc(HWND pWindow, UINT pMessage, WPARAM pW, LPARAM pL)
 //******************************
 // Custom window procedure for the MDI child window. Because MDI child
 // procedures have to call DefMDIChildProc() instead of DefWindowProc() for
@@ -243,9 +284,20 @@ LRESULT CALLBACK MDI_proc(HWND pWindow, UINT pMessage, WPARAM pW, LPARAM pL)
 // window acts as a container for the SHININHEX window and takes care of any
 // MDI specific message handling.
 {
-   HWND child;
-
+   // Retrieve pointer to Hexfile instance previously set via WM_CREATE.
+   // Note: pointer is not valid until the first WM_CREATE message.
+   Hexfile *hexfile = (Hexfile *) GetWindowLongPtr(pWindow, GWLP_USERDATA);
+   
    switch(pMessage) {
+      // A new MDI_child window is being created. Copy the Hexfile pointer
+      // from lParam in CreateMDIWindow() to window specific GWLP_USERDATA.
+      case WM_CREATE:
+      {      
+         CREATESTRUCT *cs = (CREATESTRUCT *) pL;
+         MDICREATESTRUCT *mcs = (MDICREATESTRUCT *) cs->lpCreateParams;
+         SetWindowLongPtr(pWindow, GWLP_USERDATA, (LONG_PTR) mcs->lParam);
+      }
+   
       // System menu (close/minimize/maximise) command. Closing the window
       // (SC_CLOSE) will merely hide it instead of destryoing it. All other
       // system commands are passed through.
@@ -297,6 +349,35 @@ LRESULT CALLBACK MDI_proc(HWND pWindow, UINT pMessage, WPARAM pW, LPARAM pL)
          break;
       }
 
+      // User selected a menu option from the hex editor's context menu
+      case WM_COMMAND:
+      {
+         switch(pW) {
+            // Clear R/W coverage in bitflag buffer registered with flags()
+            case IDM_CLEAR_RW:
+               hexfile->On_clear_rw();
+               break;
+         }
+         break;
+      }
+
+      // Notification from hex editor, usually in response to the user
+      // interacting with the GUI.
+      case WM_NOTIFY:
+      {
+         NMHDR *nmhdr = (NMHDR *)pL;         
+         switch(nmhdr->code) {
+            case HEXN_SHOWMENU:
+               OutputDebugString("HEXN_SHOWMENU");
+               break;
+               
+            case HEXN_CUSTOMCOLORS:
+               hexfile->On_custom_colors(pL);
+               break;
+         }
+         break;
+      }
+      
       default:
          break;
    };
@@ -766,7 +847,7 @@ void Read_SREC(UCHAR *pBuffer, const int pSize, const char *pName)
       file.scanf(2, " S%1X%2X", &type, &count);
       checksum = count;
       
-      // Read variable sized address field depending on data sequuence record
+      // Read variable sized address field depending on data sequence record
       // type. Other record types simply ignore the address.
       int addr = 0;
       switch(type) {
@@ -995,7 +1076,7 @@ void Hexfile::init(HINSTANCE pInstance, HWND pHandle, char *pTitle, int pIcon)
          INIT_HEIGHT,     // nHeight (default based on Control Panel size)
          MDI_client,      // hWndParent (parent MDI client window for child)
          pInstance,       // hInstance (window was created by this DLL)
-         NULL             // lParam (no special value to pass to window proc)
+         (LPARAM) this    // lParam (Hexfile instance; saved as GWLP_USERDATA)
       );
       W32_ASSERT( MDI_child );
       
@@ -1083,7 +1164,7 @@ void Hexfile::destroy()
    }
 }
 
-void Hexfile::data(void *pPointer, int pSize, int pOffset)
+void Hexfile::data(UCHAR *pPointer, UINT pSize, UINT pOffset)
 //******************************
 // Set or change the raw data (and its size in bytes) that is displayed
 // in the hex editor. Any changes made interactively by the user using
@@ -1092,9 +1173,6 @@ void Hexfile::data(void *pPointer, int pSize, int pOffset)
 // arbitrary address to display in the editor for the first byte of the
 // buffer.
 {
-   // TODO: assert that pSize is power of 2 and larger than 16 (needed by
-   // the file read/write functions)
-
    // TODO: assert that HEX_child should always exist
 
    // Update local variables used by load() and save()
@@ -1115,6 +1193,36 @@ void Hexfile::data(void *pPointer, int pSize, int pOffset)
    // The hex editor will invalidate and re-draw its own window in response
    // to the HEXM_SETPOINTER message.
 }
+
+void Hexfile::flags(UCHAR *pFlags, UINT pSize)
+//******************************
+// Set or change a bitflag buffer which affects how individual bytes are
+// displayed in the hex editor (e.g. color highlighting to show read/write
+// coverage). The bitflag buffer should normally be the same size as the raw
+// data, but the hex editor can still function if the
+// bitflag buffer is larger or smaller than the raw data buffer.
+// Passing zero for both arguments will disable custom coloring.
+{
+   bool oldState = (Flags && Flags_size);
+   bool newState = (pFlags && pSize);
+
+   // Add or remove the "Clear R/W coverage" menu item from the hex editor's
+   // pop-up menu depending on whether a bitflag buffer is defined
+   if(oldState != newState) {
+      HMENU menu = (HMENU) SendMessage(HEX_child, HEXM_GETMENU, 0, 0);
+      if(newState) {
+         W32_ASSERT( AppendMenu(menu, MF_SEPARATOR, IDM_CLEAR_RW_SEP, NULL) );
+         W32_ASSERT( AppendMenu(menu, MF_STRING, IDM_CLEAR_RW, CLEAR_COVERAGE) );
+      } else {
+         W32_ASSERT( RemoveMenu(menu, IDM_CLEAR_RW_SEP, MF_BYCOMMAND) );
+         W32_ASSERT( RemoveMenu(menu, IDM_CLEAR_RW, MF_BYCOMMAND) );
+      }
+   }
+
+   Flags = pFlags;
+   Flags_size = pSize;
+}
+
 void Hexfile::hide()
 //******************************
 // Hide the window from view. Although this function is available publicly,
@@ -1130,11 +1238,11 @@ void Hexfile::refresh()
 //******************************
 // Update displayed hex data because simulation has changed memory contents
 {
-   // Hex editor seems to use double buffering to prevent flicker. Sending
-   // a HEXM_SETPOINTER by calling data() will force the editor to re-read
-   // the data memory..
-   //data(Pointer, Size, Offset);
-   W32_ASSERT( InvalidateRect(HEX_child, NULL, false) );
+   // Sending HEXM_INVALIDATE forces hex editor to recompute display colors
+   // which could have changed if read/write coverage has been updated.
+   // Passing 0 for both message arguments will always refresh the entire
+   // window.
+   SendMessage(HEX_child, HEXM_INVALIDATE, 0, 0);
 }
 
 void Hexfile::show()
@@ -1168,6 +1276,9 @@ void Hexfile::readonly(bool pReadOnly)
    
    SendMessage(HEX_child, HEXM_SETVIEW2COL, txtColBg, txtColFg);
    SendMessage(HEX_child, HEXM_SETVIEW3COL, txtColBg, txtColFg);   
+   SendMessage(HEX_child, HEXM_SETMODBYTES1COL, txtColBg, txtColFg);
+   SendMessage(HEX_child, HEXM_SETMODBYTES2COL, txtColBg, txtColFg);
+   SendMessage(HEX_child, HEXM_SETMODBYTES3COL, txtColBg, txtColFg);
    SendMessage(HEX_child, HEXM_SETREADONLY, pReadOnly, 0);
 
    // Force a redraw of the hex editor window to show updated colors
@@ -1311,4 +1422,55 @@ void Hexfile::erase()
       memset(Pointer, 0xFF, Size);
       refresh();
    }
+}
+
+void Hexfile::On_custom_colors(LPARAM lParam)
+//******************************
+// Called from MDI_proc() on a WM_NOTIFY with code HEXN_CUSTOMCOLORS. If a bit
+// flag buffer was previously registered with flags(), then customize the
+// COLORREF buffers in the HEXNM_COLORS structure to reflect the read/write
+// coverage specified by the bitflags.
+{
+   HEXNM_COLORS *notify = (HEXNM_COLORS *) lParam;
+
+   if(Flags) {
+      UINT src = notify->sc_start - Offset;
+      UINT end = MIN(notify->sc_end - Offset, Flags_size);      
+      
+      // Color buffers are always filled starting at index 0. This is the
+      // first visible byte in the window, which corresponds to index "src"
+      // in the data buffer.
+      for(UINT dst = 0; src < end; src++, dst++) {
+         switch(Flags[src] & FLM_COVERAGE) {
+            case FL_READ:
+               notify->colors_hex[dst].back = COLOR_R;
+               notify->colors_ansi[dst].back = COLOR_R;
+               break;
+            
+            case FL_WRITE:
+               notify->colors_hex[dst].back = COLOR_W;
+               notify->colors_ansi[dst].back = COLOR_W;
+               break;
+            
+            case FL_READ | FL_WRITE:
+               notify->colors_hex[dst].back = COLOR_RW;
+               notify->colors_ansi[dst].back = COLOR_RW;
+               break;
+         }
+      }
+   }
+}
+
+void Hexfile::On_clear_rw()
+//******************************
+// Called from MDI_proc() on a WM_COMMAND with code IDM_CLEAR_RW. If a bit
+// flag buffer was previously registered with flags(), then set the read/write
+// coverage portion of the flags to zero.
+{
+   if(Flags) {
+      for(UINT i = 0; i < Flags_size; i++) {
+         Flags[i] &= ~FLM_COVERAGE;
+      }
+   }
+   refresh();
 }
