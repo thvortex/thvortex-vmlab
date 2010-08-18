@@ -132,6 +132,7 @@ HM ends
 	HEXM_SETREADONLY      equ WM_USER+121 ;{wParam-is_readonly: 1,0}{lParam-0}
 	HEXM_INVALIDATE       equ WM_USER+122 ;{wParam-start_offs}      {lParam-end_offset}
 	HEXM_SETCOLPOINTER    equ WM_USER+123 ;{wParam-bk_color pointer}{lParam-text_color pointer}
+	HEXM_GETMENU          equ WM_USER+124 ;{wParam-0}	        	{lParam-0}
 .data
 	ALIGN 4
 	measure_x db "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",0
