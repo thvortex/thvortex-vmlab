@@ -1133,7 +1133,8 @@ void Hexfile::refresh()
    // Hex editor seems to use double buffering to prevent flicker. Sending
    // a HEXM_SETPOINTER by calling data() will force the editor to re-read
    // the data memory..
-   data(Pointer, Size, Offset);
+   //data(Pointer, Size, Offset);
+   W32_ASSERT( InvalidateRect(HEX_child, NULL, false) );
 }
 
 void Hexfile::show()
