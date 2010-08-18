@@ -1123,6 +1123,12 @@ ttrack:
 		mov    edi, HM.can_redo[ebx]
 		xor    edi, 1
 		invoke EnableMenuItem, HM.hex_popup[ebx], 13005, edi
+
+		; Send HEXN_SHOWMENU notify so parent can customize menu
+		mov    HM.nm.hdr.code[ebx], HEXN_SHOWMENU
+		m2m    HM.nm.menu.hex_popup[ebx], HM.hex_popup[ebx]
+		invoke SendNotify
+
 		invoke GetCursorPos, ADDR pt
 		invoke TrackPopupMenuEx, HM.hex_popup[ebx], TPM_LEFTALIGN, pt.x, pt.y, HM.hWnd[ebx], 0
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
@@ -2298,7 +2304,19 @@ SetScreenColors proc uses esi edi
 	mov    DWORD PTR [esi+edi*8+4], edx
   @next_byte:
 	jmp    @B
+	
   @@:
+	; Send HEXN_CUSTOMCOLORS notify so parent can customize color buffers
+	mov    edx, HM._start[ebx]
+	mov    HM.nm.hdr.code[ebx], HEXN_CUSTOMCOLORS
+	m2m    HM.nm.colors.colors_hex[ebx], HM.screen_colors_st2[ebx]
+	m2m    HM.nm.colors.colors_ansi[ebx], HM.screen_colors_st3[ebx]
+	m2m    HM.nm.colors.sc_start[ebx], sc_start
+	add    HM.nm.colors.sc_start[ebx], edx
+	m2m    HM.nm.colors.sc_end[ebx], sc_end
+	add    HM.nm.colors.sc_end[ebx], edx
+	invoke SendNotify
+	
 	; HIGHLIGHTING OF BIGGER PRIO. - cursor pos
 	mov    esi, HM.screen_colors_st2[ebx]
 	mov    edi, HM.screen_colors_st3[ebx]
@@ -2613,5 +2631,16 @@ DlgSelect proc hDlg:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 	mov    eax, 1
 	ret
 DlgSelect endp
+
+SendNotify proc
+	mov    eax, HM.hWnd[ebx]
+	mov    HM.nm.hdr.hwndFrom[ebx], eax
+	invoke GetDlgCtrlID, eax
+	mov    HM.nm.hdr.idFrom[ebx], eax
+	invoke GetParent, HM.hWnd[ebx]
+	mov    edx, eax
+	invoke SendMessage, edx, WM_NOTIFY, HM.hWnd[ebx], ADDR HM.nm[ebx]
+	ret
+SendNotify endp
 
 End DllEntry
