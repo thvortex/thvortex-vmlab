@@ -103,8 +103,6 @@ HM struct
 	undo_start				dd ?
 	find_hwnd				dd ? ; handle of "Find" dialog (if open)
 	select_hwnd				dd ? ; handle of "Select" dialog (if open)
-	bk_color_pointer        dd ? ; Pointer to custom background color table
-	text_color_pointer      dd ? ; Pointer to custom text color table
 HM ends
 
 .const
@@ -131,7 +129,6 @@ HM ends
 	HEXM_CANREDO          equ WM_USER+120 ;{wParam-0}	        	{lParam-0}
 	HEXM_SETREADONLY      equ WM_USER+121 ;{wParam-is_readonly: 1,0}{lParam-0}
 	HEXM_INVALIDATE       equ WM_USER+122 ;{wParam-start_offs}      {lParam-end_offset}
-	HEXM_SETCOLPOINTER    equ WM_USER+123 ;{wParam-bk_color pointer}{lParam-text_color pointer}
 	HEXM_GETMENU          equ WM_USER+124 ;{wParam-0}	        	{lParam-0}
 .data
 	ALIGN 4
