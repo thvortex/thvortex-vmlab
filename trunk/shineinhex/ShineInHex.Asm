@@ -423,9 +423,13 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		invoke SetScreenColors
 		invoke InvalidateRect, HM.hWnd[ebx], 0, 0
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+	.elseif eax==HEXM_GETMENU
+		mov    eax, HM.hex_popup[ebx]
+		ret
+;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==WM_CHAR
 		cmp    HM.is_readonly[ebx], 1
-		jz     @sel_done
+		jz     @char_forward
 		cmp    HM.ctrl[ebx], 1
 		jz     @sel_done
 		mov    eax, wParam
@@ -512,6 +516,10 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 			.endif
 			invoke InvalidateRect, HM.hWnd[ebx], 0, 0
 		.else
+			; Forward unhandled WM_CHAR to parent window for custom shortcuts
+			@char_forward:
+			invoke GetParent, HM.hWnd[ebx]
+			invoke SendMessage, eax, WM_CHAR, wParam, lParam
 			jmp    @sel_done
 		.endif
 		jmp    @selection
@@ -819,6 +827,11 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				add    HM.sel_end[ebx],   eax
 				mov    eax, HM.view_lenx[ebx]
 			.endif
+		.else
+			; Forward unrecognized WM_KEYDOWN to parent window for custom shortcuts
+			invoke GetParent, HM.hWnd[ebx]
+			invoke SendMessage, eax, WM_KEYDOWN, wParam, lParam
+			jmp    @key_done
 		.endif
 		invoke SetScreenColors	
 		invoke InvalidateRect, HM.hWnd[ebx], ADDR HM.sel_rc[ebx], 0
@@ -831,6 +844,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		shl    eax, 3
 		mov    rc.right, eax
 		invoke InvalidateRect, HM.hWnd[ebx], ADDR rc, 0
+	@key_done:
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==WM_SETFOCUS
 		invoke SetFocus,    HM.hWnd[ebx]
@@ -1418,6 +1432,10 @@ ttrack:
 			invoke CloseClipboard
 		@exit__:
 			invoke GlobalFree, hex_clip_copy
+		.else
+			; Forward unrecognized WM_COMMAND to parent window for custom menu items
+			invoke GetParent, HM.hWnd[ebx]
+			invoke SendMessage, eax, WM_COMMAND, wParam, lParam
 		.endif
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==WM_SIZE
@@ -2249,7 +2267,6 @@ SetScreenColors proc uses edi esi
 	
 	mov    esi, HM.screen_colors_st2[ebx]
 	mov    edi, HM.screen_colors_st3[ebx]
-	xor    edx, edx
 	
 	; HIGHLIGHTING OF THE LOWEST PRIO. - normal bk
 	.if HM.bk_color_pointer[ebx]
