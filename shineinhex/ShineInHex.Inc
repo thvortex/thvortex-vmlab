@@ -31,6 +31,7 @@ AllocUndo    PROTO
 my_slow_cmp  PROTO :DWORD,:DWORD,:DWORD
 DoUndo       PROTO
 DoRedo       PROTO
+SendNotify   PROTO
 ;-------
 
 
@@ -58,6 +59,19 @@ UNDO STRUCT
 	un_next    dd ? ; globalloc
 	un_prev    dd ?
 UNDO ENDS
+
+HEXNM_MENU struct
+	hdr						NMHDR <?> ; standard WM_NOTIFY header
+	hex_popup				dd ? ; copy of HM.hex_popup
+HEXNM_MENU ends
+
+HEXNM_COLORS struct
+	hdr						NMHDR <?> ; standard WM_NOTIFY header
+	colors_hex				dd ? ; copy of HM.screen_colors_st2
+	colors_ansi				dd ? ; copy of HM.screen_colors_st3
+	sc_start				dd ? ; (sc_start + HM._start) from SetScreenColors
+	sc_end					dd ? ; (sc_end + HM._start) from SetScreenColors
+HEXNM_COLORS ends
 
 HM struct
 	hWnd       				dd ? ; handle of control
@@ -103,6 +117,11 @@ HM struct
 	undo_start				dd ?
 	find_hwnd				dd ? ; handle of "Find" dialog (if open)
 	select_hwnd				dd ? ; handle of "Select" dialog (if open)
+	union nm
+		hdr					NMHDR <> ; standard WM_NOTIFY header
+		menu				HEXNM_MENU <> ; used with HEXN_SHOWMENU notify
+		colors				HEXNM_COLORS <> ; used with HEXN_CUSTOMCOLORS notify
+	ends
 HM ends
 
 .const
@@ -128,8 +147,12 @@ HM ends
 	HEXM_CANUNDO		  equ WM_USER+119 ;{wParam-0}	        	{lParam-0}
 	HEXM_CANREDO          equ WM_USER+120 ;{wParam-0}	        	{lParam-0}
 	HEXM_SETREADONLY      equ WM_USER+121 ;{wParam-is_readonly: 1,0}{lParam-0}
-	HEXM_INVALIDATE       equ WM_USER+122 ;{wParam-start_offs}      {lParam-end_offset}
-	HEXM_GETMENU          equ WM_USER+124 ;{wParam-0}	        	{lParam-0}
+	HEXM_INVALIDATE       equ WM_USER+122 ;{wParam-0}           	{lParam-0}
+	HEXM_GETMENU          equ WM_USER+123 ;{wParam-0}	        	{lParam-0}
+
+	; Notification codes (NMHDR.code) used with WM_NOTIFY sent to parent window
+	HEXN_SHOWMENU         equ 100    ;About to display popup menu; parent can customize menu
+	HEXN_CUSTOMCOLORS     equ 101    ;Recomputing color tables; parent can customize display colors
 .data
 	ALIGN 4
 	measure_x db "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",0
