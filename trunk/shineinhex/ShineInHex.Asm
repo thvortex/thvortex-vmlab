@@ -1510,6 +1510,8 @@ ttrack:
 		jg     @F
 		mov    eax, HM.fon_cy[ebx]
 		@@:
+		add    eax, HM.fon_cy[ebx]
+		dec    eax
 		div    HM.fon_cy[ebx]
 		mov    ecx, eax
 		mul    HM.fon_cy[ebx]
@@ -1622,6 +1624,8 @@ ttrack:
 		mov    eax, 0
 		@@:
 		xor    edx, edx
+		add    eax, HM.fon_cy[ebx]
+		dec    eax
 		div    HM.fon_cy[ebx]
 		mul    esi
 		mov    update_end, eax
