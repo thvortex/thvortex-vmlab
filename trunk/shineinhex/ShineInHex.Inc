@@ -141,7 +141,7 @@ HM ends
 	HEXM_SETPOINTER       equ WM_USER+113 ;{wParam-data pointer} 	{lParam-data size }
 	HEXM_UNSETPOINTER     equ WM_USER+114 ;{wParam-0}            	{lParam-0         }
 	HEXM_SETOFFSET        equ WM_USER+115 ;{wParam-offset}       	{lParam-0         }
-	HEXM_SETSEL           equ WM_USER+116 ;{wParam-start_offs}	 	{lParam-end_offset}
+	HEXM_SETSEL           equ WM_USER+116 ;{wParam-start_offs}		{lParam-end_offset}
 	HEXM_UNDO             equ WM_USER+117 ;{wParam-0}	        	{lParam-0}
 	HEXM_REDO             equ WM_USER+118 ;{wParam-0}	        	{lParam-0}
 	HEXM_CANUNDO		  equ WM_USER+119 ;{wParam-0}	        	{lParam-0}
@@ -149,6 +149,7 @@ HM ends
 	HEXM_SETREADONLY      equ WM_USER+121 ;{wParam-is_readonly: 1,0}{lParam-0}
 	HEXM_INVALIDATE       equ WM_USER+122 ;{wParam-0}           	{lParam-0}
 	HEXM_GETMENU          equ WM_USER+123 ;{wParam-0}	        	{lParam-0}
+	HEXM_GETSEL           equ WM_USER+124 ;{wParam-ADDR start_offs}	{lParam-ADDR end_offset}
 
 	; Notification codes (NMHDR.code) used with WM_NOTIFY sent to parent window
 	HEXN_SHOWMENU         equ 100    ;About to display popup menu; parent can customize menu

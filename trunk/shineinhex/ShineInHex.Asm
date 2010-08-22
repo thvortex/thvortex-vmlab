@@ -364,8 +364,28 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		m2m    HM._start[ebx], wParam
 		invoke InvalidateRect, HM.hWnd[ebx], 0, 0
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+	.elseif eax==HEXM_GETSEL
+		mov    ecx, HM._start[ebx]
+		mov    esi, wParam
+		mov    edi, lParam
+		.if esi
+			m2m    [esi], HM.sel_start[ebx]
+			add    [esi], ecx
+		.endif
+		.if edi
+			m2m    [edi], HM.sel_end[ebx]
+			add    [edi], ecx
+		.endif
+;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==HEXM_SETSEL
-		mov    eax, HM._size[ebx]
+		mov    eax, HM._start[ebx]
+		.if wParam < eax
+			mov    wParam, eax
+		.endif			
+		.if lParam < eax
+			mov    lParam, eax
+		.endif				
+		add    eax, HM._size[ebx]
 		.if wParam > eax
 			mov    wParam, eax
 		.endif			
