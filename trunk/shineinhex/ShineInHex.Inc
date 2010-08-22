@@ -73,6 +73,12 @@ HEXNM_COLORS struct
 	sc_end					dd ? ; (sc_end + HM._start) from SetScreenColors
 HEXNM_COLORS ends
 
+HEXNM_SEL struct
+	hdr						NMHDR <?> ; standard WM_NOTIFY header
+	sel_start				dd ? ; (HM.sel_start + HM._start) from SetScreenColors
+	sel_end					dd ? ; (HM.sel_end + HM._start) from SetScreenColors
+HEXNM_SEL ends
+
 HM struct
 	hWnd       				dd ? ; handle of control
 	screen_colors_st2		dd ? ; Pointer to color buffer
@@ -101,6 +107,8 @@ HM struct
 	sel_start  				dd ? ; selection start offset (not an address)
 	sel_end    				dd ? ; selection end   offset (not an address)
 	sel_last                dd ?
+	prev_sel_start			dd ? ; previous sel_start when HEXN_SELCHANGED was sent
+	prev_sel_end			dd ? ; previous sel_end when HEXN_SELCHANGED was sent
 	pointer    				dd ? ; pointer of data
 	timer_direction 		dd ? ; 1 - up, 2 -down (scroll direction)
 	input_mode              dd ? ; 0 - from 2nd stage, 1 - from 3rd stage
@@ -121,6 +129,7 @@ HM struct
 		hdr					NMHDR <> ; standard WM_NOTIFY header
 		menu				HEXNM_MENU <> ; used with HEXN_SHOWMENU notify
 		colors				HEXNM_COLORS <> ; used with HEXN_CUSTOMCOLORS notify
+		sel					HEXNM_SEL <> ; used with HEXN_SELCHANGED notify
 	ends
 HM ends
 
@@ -154,6 +163,7 @@ HM ends
 	; Notification codes (NMHDR.code) used with WM_NOTIFY sent to parent window
 	HEXN_SHOWMENU         equ 100    ;About to display popup menu; parent can customize menu
 	HEXN_CUSTOMCOLORS     equ 101    ;Recomputing color tables; parent can customize display colors
+	HEXN_SELCHANGED       equ 102    ;Current cursor position or selection range has changed
 .data
 	ALIGN 4
 	measure_x db "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",0

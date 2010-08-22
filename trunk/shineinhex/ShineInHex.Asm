@@ -2252,6 +2252,23 @@ SetScreenColors proc uses esi edi
 	LOCAL sc_start:DWORD
 	LOCAL sc_end:DWORD
 
+	; SetScreenColors is always called after cursor or selection changes.
+	; If selection is differnet from last HEXN_SELCHANGED sent then send a new
+	; notify so parent can update status bars, etc.
+	mov    ecx, HM.sel_start[ebx]
+	mov    edx, HM.sel_end[ebx]
+	.if HM.prev_sel_start[ebx] != ecx || HM.prev_sel_end[ebx] != edx
+		m2m    HM.prev_sel_start[ebx], ecx
+		m2m    HM.prev_sel_end[ebx], edx
+		mov    edx, HM._start[ebx]
+		mov    HM.nm.hdr.code[ebx], HEXN_SELCHANGED
+		m2m    HM.nm.sel.sel_start[ebx], HM.sel_start[ebx]
+		add    HM.nm.sel.sel_start[ebx], edx
+		m2m    HM.nm.sel.sel_end[ebx], HM.sel_end[ebx]
+		add    HM.nm.sel.sel_end[ebx], edx
+		invoke SendNotify
+	.endif
+	
 	mov    ecx, HM.pointer[ebx]
 	mov    eax, HM.vscrollpos[ebx]
 	mul    HM.view_lenx[ebx]
