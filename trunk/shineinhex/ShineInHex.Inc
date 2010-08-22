@@ -32,6 +32,7 @@ my_slow_cmp  PROTO :DWORD,:DWORD,:DWORD
 DoUndo       PROTO
 DoRedo       PROTO
 SendNotify   PROTO
+SendChangeNotify PROTO :DWORD,:DWORD,:DWORD
 ;-------
 
 
@@ -60,24 +61,24 @@ UNDO STRUCT
 	un_prev    dd ?
 UNDO ENDS
 
-HEXNM_MENU struct
+HEXNM_SHOWMENU struct
 	hdr						NMHDR <?> ; standard WM_NOTIFY header
 	hex_popup				dd ? ; copy of HM.hex_popup
-HEXNM_MENU ends
+HEXNM_SHOWMENU ends
 
-HEXNM_COLORS struct
+HEXNM_CUSTOMCOLORS struct
 	hdr						NMHDR <?> ; standard WM_NOTIFY header
 	colors_hex				dd ? ; copy of HM.screen_colors_st2
 	colors_ansi				dd ? ; copy of HM.screen_colors_st3
 	sc_start				dd ? ; (sc_start + HM._start) from SetScreenColors
 	sc_end					dd ? ; (sc_end + HM._start) from SetScreenColors
-HEXNM_COLORS ends
+HEXNM_CUSTOMCOLORS ends
 
-HEXNM_SEL struct
+HEXNM_CHANGE struct
 	hdr						NMHDR <?> ; standard WM_NOTIFY header
-	sel_start				dd ? ; (HM.sel_start + HM._start) from SetScreenColors
-	sel_end					dd ? ; (HM.sel_end + HM._start) from SetScreenColors
-HEXNM_SEL ends
+	_start					dd ? ; (HM.sel_start + HM._start)
+	_end					dd ? ; (HM.sel_end + HM._start)
+HEXNM_CHANGE ends
 
 HM struct
 	hWnd       				dd ? ; handle of control
@@ -127,9 +128,9 @@ HM struct
 	select_hwnd				dd ? ; handle of "Select" dialog (if open)
 	union nm
 		hdr					NMHDR <> ; standard WM_NOTIFY header
-		menu				HEXNM_MENU <> ; used with HEXN_SHOWMENU notify
-		colors				HEXNM_COLORS <> ; used with HEXN_CUSTOMCOLORS notify
-		sel					HEXNM_SEL <> ; used with HEXN_SELCHANGED notify
+		menu				HEXNM_SHOWMENU <> ; used with HEXN_SHOWMENU notify
+		colors				HEXNM_CUSTOMCOLORS <> ; used with HEXN_CUSTOMCOLORS notify
+		change				HEXNM_CHANGE <> ; used with HEXN_SELCHANGE and HEXN_DATACHANGE notify
 	ends
 HM ends
 
@@ -163,7 +164,8 @@ HM ends
 	; Notification codes (NMHDR.code) used with WM_NOTIFY sent to parent window
 	HEXN_SHOWMENU         equ 100    ;About to display popup menu; parent can customize menu
 	HEXN_CUSTOMCOLORS     equ 101    ;Recomputing color tables; parent can customize display colors
-	HEXN_SELCHANGED       equ 102    ;Current cursor position or selection range has changed
+	HEXN_SELCHANGE        equ 102    ;Current cursor position or selection range has changed
+	HEXN_DATACHANGE       equ 103    ;Bytes in data buffer at cursor position or inside selection have changed
 .data
 	ALIGN 4
 	measure_x db "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",0

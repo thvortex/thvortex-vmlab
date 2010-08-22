@@ -502,6 +502,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 					inc    edi
 					jmp    @next_char
 				.endif
+				invoke SendChangeNotify, HEXN_DATACHANGE, HM.sel_start[ebx], HM.sel_end[ebx]				
 				invoke InvalidateRect, HM.hWnd[ebx], 0, 0
 				mov    ecx, HM.sel_start[ebx]
 				mov    edx, HM.sel_end[ebx]
@@ -528,6 +529,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				shr    al, 4
 				jmp    @next_char
 			.endif
+			invoke SendChangeNotify, HEXN_DATACHANGE, HM.sel_start[ebx], HM.sel_end[ebx]			
 			invoke InvalidateRect, HM.hWnd[ebx], 0, 0
 		.else
 			; Forward unhandled WM_CHAR to parent window for custom shortcuts
@@ -567,6 +569,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 			inc    edi
 			jmp    @next_char1
 		.endif
+		invoke SendChangeNotify, HEXN_DATACHANGE, HM.sel_start[ebx], HM.sel_end[ebx]
 		mov    ecx, HM.sel_start[ebx]
 		mov    edx, HM.sel_end[ebx]
 		.if ecx == edx
@@ -1951,6 +1954,9 @@ DoUndo proc
 	test   eax, eax
 	jnz    @duplicate
 	invoke MemCopy, esi, edi, len
+	sub    edi, HM.pointer[ebx]
+	add    len, edi
+	invoke SendChangeNotify, HEXN_DATACHANGE, edi, len
 	@cannot_undo:
 	
 	ret
@@ -1981,6 +1987,9 @@ DoRedo proc
 	test   eax, eax
 	jnz    @duplicate
 	invoke MemCopy, esi, edi, len
+	sub    edi, HM.pointer[ebx]
+	add    len, edi
+	invoke SendChangeNotify, HEXN_DATACHANGE, edi, len
 	@cannot_redo:
 	ret
 DoRedo endp
@@ -2260,13 +2269,7 @@ SetScreenColors proc uses esi edi
 	.if HM.prev_sel_start[ebx] != ecx || HM.prev_sel_end[ebx] != edx
 		m2m    HM.prev_sel_start[ebx], ecx
 		m2m    HM.prev_sel_end[ebx], edx
-		mov    edx, HM._start[ebx]
-		mov    HM.nm.hdr.code[ebx], HEXN_SELCHANGED
-		m2m    HM.nm.sel.sel_start[ebx], HM.sel_start[ebx]
-		add    HM.nm.sel.sel_start[ebx], edx
-		m2m    HM.nm.sel.sel_end[ebx], HM.sel_end[ebx]
-		add    HM.nm.sel.sel_end[ebx], edx
-		invoke SendNotify
+		invoke SendChangeNotify, HEXN_SELCHANGE, ecx, edx
 	.endif
 	
 	mov    ecx, HM.pointer[ebx]
@@ -2683,5 +2686,16 @@ SendNotify proc
 	invoke SendMessage, edx, WM_NOTIFY, HM.hWnd[ebx], ADDR HM.nm[ebx]
 	ret
 SendNotify endp
+
+SendChangeNotify proc code:DWORD, _start:DWORD, _end:DWORD
+	mov    edx, HM._start[ebx]
+	m2m    HM.nm.hdr.code[ebx], code
+	m2m    HM.nm.change._start[ebx], _start
+	m2m    HM.nm.change._end[ebx], _end
+	add    HM.nm.change._start[ebx], edx
+	add    HM.nm.change._end[ebx], edx
+	invoke SendNotify
+	ret
+SendChangeNotify endp
 
 End DllEntry
