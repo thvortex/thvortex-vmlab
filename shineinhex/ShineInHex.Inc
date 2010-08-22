@@ -157,9 +157,10 @@ HM ends
 	HEXM_CANUNDO		  equ WM_USER+119 ;{wParam-0}	        	{lParam-0}
 	HEXM_CANREDO          equ WM_USER+120 ;{wParam-0}	        	{lParam-0}
 	HEXM_SETREADONLY      equ WM_USER+121 ;{wParam-is_readonly: 1,0}{lParam-0}
-	HEXM_INVALIDATE       equ WM_USER+122 ;{wParam-0}           	{lParam-0}
-	HEXM_GETMENU          equ WM_USER+123 ;{wParam-0}	        	{lParam-0}
+	HEXM_INVALIDATEALL    equ WM_USER+122 ;{wParam-0}           	{lParam-0}
+	HEXM_GETHMENU         equ WM_USER+123 ;{wParam-0}	        	{lParam-0}
 	HEXM_GETSEL           equ WM_USER+124 ;{wParam-ADDR start_offs}	{lParam-ADDR end_offset}
+	HEXM_ALLOCUNDOREDO    equ WM_USER+125 ;{wParam-0}	        	{lParam-0}
 
 	; Notification codes (NMHDR.code) used with WM_NOTIFY sent to parent window
 	HEXN_SHOWMENU         equ 100    ;About to display popup menu; parent can customize menu
