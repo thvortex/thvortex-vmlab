@@ -429,8 +429,11 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		mov    eax, HM.can_redo[ebx]
 		ret
 	.elseif eax==HEXM_SETREADONLY
-		mov    eax, wParam
-		mov    HM.is_readonly[ebx], eax
+		.if wParam
+			mov    HM.is_readonly[ebx], 1
+		.else
+			mov    HM.is_readonly[ebx], 0
+		.endif
 		ret
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==HEXM_INVALIDATE
@@ -1142,9 +1145,11 @@ ttrack:
 		invoke EnableMenuItem, HM.hex_popupA[ebx], 13008, edi
 		mov    edi, HM.can_undo[ebx]
 		xor    edi, 1
+		or     edi, HM.is_readonly[ebx]
 		invoke EnableMenuItem, HM.hex_popup[ebx], 13004, edi
 		mov    edi, HM.can_redo[ebx]
 		xor    edi, 1
+		or     edi, HM.is_readonly[ebx]
 		invoke EnableMenuItem, HM.hex_popup[ebx], 13005, edi
 
 		; Send HEXN_SHOWMENU notify so parent can customize menu
@@ -1936,6 +1941,8 @@ DoUndo proc
 	@duplicate:	
 	cmp    HM.can_undo[ebx], 1
 	jnz    @cannot_undo
+	cmp    HM.is_readonly[ebx], 1
+	jz     @cannot_undo
 	mov    eax, HM.undo_start[ebx]
 	mov    eax, DWORD PTR [eax+16]
 	mov    HM.undo_start[ebx], eax
@@ -1969,6 +1976,8 @@ DoRedo proc
 	@duplicate:	
 	cmp    HM.can_redo[ebx], 1
 	jnz    @cannot_redo
+	cmp    HM.is_readonly[ebx], 1
+	jz     @cannot_redo
 	mov    eax, HM.undo_start[ebx]
 	mov    esi, DWORD PTR [eax+0]
 	mov    ecx, DWORD PTR [eax+4]
