@@ -436,13 +436,16 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		.endif
 		ret
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
-	.elseif eax==HEXM_INVALIDATE
+	.elseif eax==HEXM_INVALIDATEALL
 		invoke SetScreenColors
 		invoke InvalidateRect, HM.hWnd[ebx], 0, 0
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
-	.elseif eax==HEXM_GETMENU
+	.elseif eax==HEXM_GETHMENU
 		mov    eax, HM.hex_popup[ebx]
 		ret
+;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+	.elseif eax==HEXM_ALLOCUNDOREDO
+		invoke AllocUndo
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==WM_CHAR
 		cmp    HM.is_readonly[ebx], 1
@@ -1940,12 +1943,18 @@ DoUndo proc
 	cmp    HM.is_readonly[ebx], 1
 	jz     @cannot_undo
 	mov    eax, HM.undo_start[ebx]
+	test   eax, eax
+	jz     @cannot_undo
 	mov    eax, DWORD PTR [eax+16]
+	test   eax, eax
+	jz     @cannot_undo
 	mov    HM.undo_start[ebx], eax
 	mov    esi, DWORD PTR [eax+0]
 	mov    ecx, DWORD PTR [eax+4]
 	mov    edi, DWORD PTR [eax+8]
 	mov    edx, DWORD PTR [eax+16]
+	test   edx, edx
+	jz     @cannot_undo
 	mov    edx, DWORD PTR [edx+16]
 	test   edx, edx
 	jnz    @F
@@ -1975,6 +1984,8 @@ DoRedo proc
 	cmp    HM.is_readonly[ebx], 1
 	jz     @cannot_redo
 	mov    eax, HM.undo_start[ebx]
+	test   eax, eax
+	jz     @cannot_redo
 	mov    esi, DWORD PTR [eax+0]
 	mov    ecx, DWORD PTR [eax+4]
 	mov    edi, DWORD PTR [eax+8]
@@ -2693,12 +2704,17 @@ SendNotify proc
 SendNotify endp
 
 SendChangeNotify proc code:DWORD, _start:DWORD, _end:DWORD
-	mov    edx, HM._start[ebx]
+	mov    ecx, _start
+	mov    edx, _end
+	.if    ecx > edx
+		xchg   ecx, edx
+	.endif
 	m2m    HM.nm.hdr.code[ebx], code
-	m2m    HM.nm.change._start[ebx], _start
-	m2m    HM.nm.change._end[ebx], _end
-	add    HM.nm.change._start[ebx], edx
-	add    HM.nm.change._end[ebx], edx
+	mov    HM.nm.change._start[ebx], ecx
+	mov    HM.nm.change._end[ebx], edx
+	mov    eax, HM._start[ebx]
+	add    HM.nm.change._start[ebx], eax
+	add    HM.nm.change._end[ebx], eax
 	invoke SendNotify
 	ret
 SendChangeNotify endp
