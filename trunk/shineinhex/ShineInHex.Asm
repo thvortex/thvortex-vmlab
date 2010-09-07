@@ -163,6 +163,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 	LOCAL size2 :DWORD
 	LOCAL bound1:DWORD
 	LOCAL bound2:DWORD
+	LOCAL sel_changed:DWORD
 	LOCAL charB :BYTE
 	LOCAL buf[32]:BYTE
 
@@ -590,18 +591,25 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==WM_KEYDOWN
 		invoke GetKeyState, VK_SHIFT
+		and    eax, 0FFFFh
 		shr    eax, 15
 		mov    HM.shift[ebx], eax
 		invoke GetKeyState, VK_CONTROL
+		and    eax, 0FFFFh
 		shr    eax, 15
 		mov    HM.ctrl[ebx], eax
 		mov    eax, wParam
-		.if eax > 20h && eax < 29h && HM.shift[ebx] == 0
+		mov    sel_changed, 0
+		.if eax > 20h && eax < 29h && HM.shift[ebx] == 0 && HM.ctrl[ebx] == 0
 			mov    ecx, HM.sel_start[ebx]
 			mov    edx, HM.sel_end[ebx]
 			.if ecx < edx || ecx > edx
-				mov     HM.sel_start[ebx], edx
-				mov     HM.sel_end[ebx],   edx
+			    .if HM._size[ebx] == edx
+					dec    edx
+				.endif
+				mov    HM.sel_start[ebx], edx
+				mov    HM.sel_end[ebx],   edx
+				inc    sel_changed
 			.endif
 		.elseif eax == VK_Z && HM.ctrl[ebx]
 			invoke DoUndo
@@ -626,14 +634,17 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		.if eax == VK_RIGHT || eax == VK_LEFT
 			mov    HM.byte_nr[ebx], 0
 			.if eax == VK_RIGHT
-				mov    eax, HM.view_leny[ebx]
-				mov    ecx, HM.view_lenx[ebx]
-				mov    edx, HM._size[ebx]
-				;dec    edx
-				cmp    HM.sel_end[ebx], edx
-				jz     @skip
-				;???
+				mov    ecx, HM.sel_start[ebx]
 				mov    eax, HM.sel_end[ebx]
+				mov    edx, HM._size[ebx]
+				.if eax == ecx
+					dec    edx
+				.endif
+				.if eax == edx || ecx == edx
+					jmp    @skip
+				.endif
+				;???
+				;mov    eax, HM.sel_end[ebx]
 				xor    edx, edx
 				div    HM.view_lenx[ebx]
 				sub    eax, HM.vscrollpos[ebx]
@@ -658,10 +669,10 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				@@:	
 				inc    HM.sel_end[ebx]
 			.else
-				mov    eax, HM.view_lenx[ebx]
 				xor    ecx, ecx
-				cmp    HM.sel_end[ebx], ecx
-				jz     @skip
+				.if HM.sel_end[ebx] == ecx || HM.sel_start[ebx] == ecx
+					jmp    @skip
+				.endif
 				;???
 				mov    eax, HM.sel_end[ebx]
 				xor    edx, edx
@@ -688,8 +699,9 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		.elseif eax == VK_UP || eax == VK_DOWN
 			.if eax == VK_UP
 				mov    eax, HM.view_lenx[ebx]
-				cmp    HM.sel_end[ebx], eax
-				jb     @skip
+				.if HM.sel_end[ebx] < eax || HM.sel_start[ebx] < eax
+					jmp    @skip
+				.endif
 				;???
 				mov    eax, HM.sel_end[ebx]
 				xor    edx, edx
@@ -712,13 +724,18 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				sub    HM.sel_end[ebx],   ecx
 				invoke SetScreenColors	
 			.else
-				mov    ecx, HM.view_leny[ebx]
-				mov    eax, HM._size[ebx]
-				sub    eax, HM.view_lenx[ebx]
-				cmp    HM.sel_end[ebx], eax
-				jge    @skip
-				;???
+				mov    ecx, HM.sel_start[ebx]
 				mov    eax, HM.sel_end[ebx]
+				mov    edx, HM._size[ebx]
+				sub    edx, HM.view_lenx[ebx]
+				.if eax == ecx
+					dec    edx
+				.endif
+				.if eax > edx || ecx > edx
+					jmp    @skip
+				.endif			
+				mov    ecx, HM.view_leny[ebx]
+				;mov    eax, HM.sel_end[ebx]
 				xor    edx, edx
 				div    HM.view_lenx[ebx]
 				sub    eax, HM.vscrollpos[ebx]
@@ -856,9 +873,12 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 			invoke SendMessage, eax, WM_KEYDOWN, wParam, lParam
 			jmp    @key_done
 		.endif
-		invoke SetScreenColors	
-		invoke InvalidateRect, HM.hWnd[ebx], ADDR HM.sel_rc[ebx], 0
+		inc    sel_changed
 	@skip:
+		.if sel_changed
+			invoke SetScreenColors	
+			invoke InvalidateRect, HM.hWnd[ebx], ADDR HM.sel_rc[ebx], 0
+		.endif
 		mov    rc.left, 0
 		mov    rc.top, 0
 		mov    eax, HM.fon_cy[ebx]
