@@ -127,6 +127,10 @@ HM struct
 	find_hwnd				dd ? ; handle of "Find" dialog (if open)
 	select_hwnd				dd ? ; handle of "Select" dialog (if open)
 	end_of_line				dd ? ; is cursor at the end of line because of VK_END
+	caret_posx				dd ? ; blinking caret horizontal position (in window client area pixels)
+	caret_posy				dd ? ; blinking caret vertical position (in window client area pixels)
+	caret_visible			dd ? ; is blinking caret within visible portion of window
+	focus					dd ? ; does hex editor have keyboard focus
 	union nm
 		hdr					NMHDR <> ; standard WM_NOTIFY header
 		menu				HEXNM_SHOWMENU <> ; used with HEXN_SHOWMENU notify
@@ -220,5 +224,4 @@ HM ends
 	ALIGN 4
 	one_line2			db 64      dup (?)
 	one_line1			db 64*3    dup (?)
-	hexlook				db 16*16*4 dup (?)
-	ALIGN 4
+	hexlook				db 16*16*4 dup (?)	ALIGN 4

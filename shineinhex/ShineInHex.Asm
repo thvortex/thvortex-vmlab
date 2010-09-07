@@ -943,7 +943,17 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 	@key_done:
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==WM_SETFOCUS
-		invoke SetFocus,    HM.hWnd[ebx]
+		mov    HM.focus[ebx], 1
+		invoke SetFocus,    HM.hWnd[ebx] ; Is this actually necessary?
+		invoke CreateCaret, HM.hWnd[ebx], NULL, 2, HM.fon_cy[ebx]
+		.if HM.caret_visible[ebx]
+			invoke SetCaretPos, HM.caret_posx[ebx], HM.caret_posy[ebx]
+			invoke ShowCaret, HM.hWnd[ebx]
+		.endif
+;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+	.elseif eax==WM_KILLFOCUS
+		mov    HM.focus[ebx], 0
+		invoke DestroyCaret
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 	.elseif eax==WM_GETDLGCODE
 		mov    eax, DLGC_WANTALLKEYS+DLGC_WANTTAB
@@ -2463,6 +2473,46 @@ SetScreenColors proc uses esi edi
 	m2m    HM.nm.colors.sc_end[ebx], sc_end
 	add    HM.nm.colors.sc_end[ebx], edx
 	invoke SendNotify
+
+	; CALCULATE BLINKING CARET PIXEL POSITION
+	mov    eax, HM.sel_end[ebx]
+	cmp    eax, sc_end
+	ja     @no_caret
+	cmp    eax, sc_start
+	jb     @no_caret
+	sub    eax, sc_start	
+	xor    edx, edx
+	div    HM.view_lenx[ebx]
+	mov    ecx, edx
+	mul    HM.fon_cy[ebx]
+	xchg   eax, ecx
+	mul    HM.fon_cx[ebx]
+	mov    edx, eax
+	.if HM.input_mode[ebx]
+		add    edx, HM.rc3.left[ebx]
+		add    ecx, HM.rc3.top[ebx]
+	.else
+		mov    eax, 3
+		mul    edx	
+		mov    edx, eax
+		cmp    HM.byte_nr[ebx], 0
+		jz     @F
+		add    edx, HM.fon_cx[ebx]
+		@@:
+		add    edx, HM.rc2.left[ebx]
+		add    ecx, HM.rc2.top[ebx]	
+	.endif
+	mov    HM.caret_posx[ebx], edx
+	mov    HM.caret_posy[ebx], ecx
+	
+	; Update caret position and make it visible if previously hidden
+	.if HM.focus[ebx]
+		invoke SetCaretPos, HM.caret_posx[ebx], HM.caret_posy[ebx]
+		.if !HM.caret_visible[ebx]
+			invoke ShowCaret, HM.hWnd[ebx]
+			mov    HM.caret_visible[ebx], 1	
+		.endif
+	.endif
 	
 	; HIGHLIGHTING OF BIGGER PRIO. - cursor pos
 	mov    esi, HM.screen_colors_st2[ebx]
@@ -2470,11 +2520,7 @@ SetScreenColors proc uses esi edi
 	mov    ecx, HM.sel_start[ebx]
 	mov    edx, HM.sel_end[ebx]
 	cmp    ecx, edx
-	jnz    @F
-	cmp    edx, sc_end
-	ja     @no_sel
-	cmp    edx, sc_start
-	jb     @no_sel
+	jnz    @no_cursor
 	sub    edx, sc_start
 	mov    eax, [HM.bk_color  +32][ebx]
 	mov    DWORD PTR [esi+edx*8+0], eax
@@ -2483,8 +2529,20 @@ SetScreenColors proc uses esi edi
 	mov    DWORD PTR [esi+edx*8+4], eax
 	mov    DWORD PTR [edi+edx*8+4], eax
 	jmp    @no_sel
+		
+	; Hide caret if previously shown
+	@no_caret:
+	.if HM.focus[ebx]
+		.if HM.caret_visible[ebx]
+			invoke HideCaret, HM.hWnd[ebx]
+			mov    HM.caret_visible[ebx], 0
+		.endif
+	.endif
+
 	; HIGHLIGHTING OF THE BIGGEST PRIO. - selection
-  @@:
+	@no_cursor:
+	mov    ecx, HM.sel_start[ebx]
+	mov    edx, HM.sel_end[ebx]
 	cmp    ecx, edx
 	jb     @F
 	xchg   ecx, edx
@@ -2515,6 +2573,9 @@ SetScreenColors proc uses esi edi
 	inc    ecx
 	jmp    @B
   @no_sel:	
+  
+	; SHOW OR HIDE BLINKING CARET IF EDITOR HAS FOCUS
+
 	;-----------------
 	ret
 SetScreenColors endp
