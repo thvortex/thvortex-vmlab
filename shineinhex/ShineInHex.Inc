@@ -126,6 +126,7 @@ HM struct
 	undo_start				dd ?
 	find_hwnd				dd ? ; handle of "Find" dialog (if open)
 	select_hwnd				dd ? ; handle of "Select" dialog (if open)
+	end_of_line				dd ? ; is cursor at the end of line because of VK_END
 	union nm
 		hdr					NMHDR <> ; standard WM_NOTIFY header
 		menu				HEXNM_SHOWMENU <> ; used with HEXN_SHOWMENU notify
@@ -184,6 +185,7 @@ HM ends
 	
 	m5 db 34,"\x%02x",0
 	m6 db "\x%02x",0
+	m7 db "EOL", 0 ; TODO: DELETE ME ONCE BLINKING CARET SUPPORT IS DONE
 	;--------------------------
 	menui_undo	    db "Undo",0
 	menui_redo      db "Redo",0

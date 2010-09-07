@@ -730,7 +730,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 			.else
 				mov    ecx, HM.sel_start[ebx]
 				mov    eax, HM.sel_end[ebx]
-				mov    edx, HM._size[ebx]
+				mov    edx, HM._size[ebx] ; TODO: This wraps around
 				sub    edx, HM.view_lenx[ebx]
 				.if eax == ecx && HM.shift[ebx] != 1
 					dec    edx
@@ -852,7 +852,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 			.if eax==VK_HOME
 				mov    ecx, HM.view_lenx[ebx]
 				mov    eax, HM.sel_end[ebx]
-				.if HM.ctrl[ebx] == 1
+				.if HM.ctrl[ebx] && !HM.shift[ebx]
 					mov    edx, HM.sel_start[ebx]
 					.if edx < eax
 						xchg   edx, eax
@@ -860,50 +860,58 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				.endif
 				xor    edx, edx
 				div    ecx
-				cmp    edx, 0
-				jz     @skip
+				.if edx == 0 && HM.end_of_line[ebx] && HM.sel_end[ebx] >= ecx
+					mov    edx, ecx
+				.endif
+				mov    HM.end_of_line[ebx], 0; TODO: remove later
 				cmp    HM.shift[ebx], 1
 				jz     @F
 				sub    HM.sel_start[ebx], edx
 				@@:
 				sub    HM.sel_end[ebx],   edx
 			.else
-				mov    ecx, HM.view_lenx[ebx]
+				cmp    HM.end_of_line[ebx], 1
+				jz     @skip
 				mov    eax, HM.sel_end[ebx]
-				.if HM.ctrl[ebx] == 1
+				.if HM.ctrl[ebx] && !HM.shift[ebx]
 					mov    edx, HM.sel_start[ebx]
 					.if edx > eax
 						xchg   edx, eax
 					.endif
 				.endif
-				inc    eax
+				mov    edi, HM._size[ebx]
+				.if !HM.shift[ebx] && (!HM.ctrl[ebx] || edx == eax)
+					inc    eax
+					dec    edi
+				.endif
+				mov    ecx, HM.view_lenx[ebx]
 				xor    edx, edx
 				div    ecx
-				cmp    edx, 0
-				jz     @skip
-				mov    eax, HM.view_lenx[ebx]
-				sub    eax, edx
-				mov    ecx, HM.sel_end[ebx]
-				.if HM.shift[ebx] || HM.ctrl[ebx] && HM.sel_start[ebx] != ecx
-					inc    eax
-				.endif
-				.if eax == HM.view_lenx[ebx]
-					cmp    HM.sel_start[ebx], ecx
-					jb     @skip
-					cmp    HM.ctrl[ebx], 1
-					jz     @skip
-				.endif
+				sub    ecx, edx
+				mov    HM.end_of_line[ebx], 1; TODO: remove later
 				.if HM.shift[ebx]
+					mov    eax, edi
+					sub    eax, HM.sel_end[ebx]
+					.if eax < ecx
+						xchg   ecx, eax
+					.endif				
+					add    HM.sel_end[ebx], ecx
+				.else
 					mov    edx, HM.sel_end[ebx]
-					add    edx, eax
-					cmp    edx, HM.sel_start[ebx]
-					jz     @skip
+					.if HM.ctrl[ebx]
+						mov    eax, HM.sel_start[ebx]
+						.if edx < eax
+							xchg   edx, eax
+						.endif
+					.endif
+					mov    eax, edi
+					sub    eax, HM.sel_end[ebx]
+					.if eax < ecx
+						xchg   ecx, eax
+					.endif
+					add    HM.sel_end[ebx], ecx
+					add    HM.sel_start[ebx], ecx					
 				.endif
-				cmp    HM.shift[ebx], 1
-				jz     @F
-				add    HM.sel_start[ebx], eax
-				@@:
-				add    HM.sel_end[ebx],   eax
 			.endif
 		.else
 			; Forward unrecognized WM_KEYDOWN to parent window for custom shortcuts
@@ -2245,7 +2253,22 @@ DrawHeader proc
 	@@:
 		
 	invoke TextOut, HM.mdc[ebx], HM.rc3.left[ebx], 0, esi, 4
-		
+
+	mov    esi, OFFSET m2
+	cmp    HM.input_mode[ebx], 1
+	jz     @F
+	mov    esi, OFFSET m1
+	@@:
+	
+	;------- TODO: DELETE ME LATER ONCE BLINKING CARET SUPPORT IS DONE
+	.if HM.end_of_line[ebx]
+		mov edx, HM.rc3.left[ebx]
+		add edx, 50
+		mov esi, OFFSET m7
+		invoke TextOut, HM.mdc[ebx], edx, 0, esi, 4
+	.endif
+	;-------
+	
 	ret
 DrawHeader endp
 
