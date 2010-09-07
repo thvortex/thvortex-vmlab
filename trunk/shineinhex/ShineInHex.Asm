@@ -637,14 +637,14 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				mov    ecx, HM.sel_start[ebx]
 				mov    eax, HM.sel_end[ebx]
 				mov    edx, HM._size[ebx]
-				.if eax == ecx
+				.if eax == ecx && HM.shift[ebx] != 1
 					dec    edx
 				.endif
 				.if eax == edx || ecx == edx
 					jmp    @skip
 				.endif
 				;???
-				;mov    eax, HM.sel_end[ebx]
+				mov    eax, HM.sel_end[ebx]
 				xor    edx, edx
 				div    HM.view_lenx[ebx]
 				sub    eax, HM.vscrollpos[ebx]
@@ -670,7 +670,9 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				inc    HM.sel_end[ebx]
 			.else
 				xor    ecx, ecx
-				.if HM.sel_end[ebx] == ecx || HM.sel_start[ebx] == ecx
+				cmp    HM.sel_end[ebx], ecx
+				jz     @skip
+				.if HM.ctrl[ebx] == 1 && HM.sel_start[ebx] == ecx
 					jmp    @skip
 				.endif
 				;???
@@ -699,7 +701,9 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		.elseif eax == VK_UP || eax == VK_DOWN
 			.if eax == VK_UP
 				mov    eax, HM.view_lenx[ebx]
-				.if HM.sel_end[ebx] < eax || HM.sel_start[ebx] < eax
+				cmp    HM.sel_end[ebx], eax
+				jb     @skip
+				.if HM.ctrl[ebx] == 1 && HM.sel_start[ebx] < eax
 					jmp    @skip
 				.endif
 				;???
@@ -728,14 +732,16 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				mov    eax, HM.sel_end[ebx]
 				mov    edx, HM._size[ebx]
 				sub    edx, HM.view_lenx[ebx]
-				.if eax == ecx
+				.if eax == ecx && HM.shift[ebx] != 1
 					dec    edx
 				.endif
-				.if eax > edx || ecx > edx
+				cmp    eax, edx
+				ja     @skip
+				.if HM.ctrl[ebx] == 1 && ecx > edx
 					jmp    @skip
-				.endif			
+				.endif
 				mov    ecx, HM.view_leny[ebx]
-				;mov    eax, HM.sel_end[ebx]
+				mov    eax, HM.sel_end[ebx]
 				xor    edx, edx
 				div    HM.view_lenx[ebx]
 				sub    eax, HM.vscrollpos[ebx]
