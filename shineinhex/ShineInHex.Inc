@@ -33,6 +33,7 @@ DoUndo       PROTO
 DoRedo       PROTO
 SendNotify   PROTO
 SendChangeNotify PROTO :DWORD,:DWORD,:DWORD
+PositionCaret  PROTO
 ;-------
 
 
@@ -85,6 +86,8 @@ HM struct
 	screen_colors_st2		dd ? ; Pointer to color buffer
 	screen_colors_st3 		dd ? ; Pointer to color buffer
 	screen_colors_len		dd ? ; Size (in displayed chars) of color buffers (screen_colors_len * 8 + 8 = byte size of each buffer)
+	sc_start				dd ? ; offset (not an address) of first visible byte on screen
+	sc_end					dd ? ; offset (not an address) of last visible byte on screen
 	bk_color				dd 12 dup (?)
 	text_color				dd 12 dup (?)
 	rc1 					RECT <?> ; 1st stage rect
@@ -224,4 +227,5 @@ HM ends
 	ALIGN 4
 	one_line2			db 64      dup (?)
 	one_line1			db 64*3    dup (?)
-	hexlook				db 16*16*4 dup (?)	ALIGN 4
+	hexlook				db 16*16*4 dup (?)
+	ALIGN 4

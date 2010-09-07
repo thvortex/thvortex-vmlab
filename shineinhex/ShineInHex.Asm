@@ -474,6 +474,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				dec    edx
 			.else
 				add    edi, ecx
+				mov    HM.end_of_line[ebx], 0
 			.endif
 			mov    charB, 0
 			.if al > 2Fh && al < 3Ah
@@ -509,12 +510,13 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 					inc    edi
 					jmp    @next_char
 				.endif
-				invoke SendChangeNotify, HEXN_DATACHANGE, HM.sel_start[ebx], HM.sel_end[ebx]				
+				invoke SendChangeNotify, HEXN_DATACHANGE, HM.sel_start[ebx], HM.sel_end[ebx]
 				invoke InvalidateRect, HM.hWnd[ebx], 0, 0
 				mov    ecx, HM.sel_start[ebx]
 				mov    edx, HM.sel_end[ebx]
 				.if ecx == edx
 					mov    wParam, VK_RIGHT
+					invoke PositionCaret
 					invoke AllocUndo
 					jmp    @right
 				.else
@@ -565,6 +567,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 			dec    edx
 		.else
 			add    edi, ecx
+			mov    HM.end_of_line[ebx], 0
 		.endif
 	  @next_char1:
 		pusha
@@ -581,11 +584,13 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		mov    edx, HM.sel_end[ebx]
 		.if ecx == edx
 			mov    wParam, VK_RIGHT
+			invoke PositionCaret
 			invoke AllocUndo
 			jmp    @right
 		.endif
 		invoke InvalidateRect, HM.hWnd[ebx], 0, 0
 	@selection:
+		invoke PositionCaret
 		invoke AllocUndo
 	@sel_done:
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
@@ -604,9 +609,6 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 			mov    ecx, HM.sel_start[ebx]
 			mov    edx, HM.sel_end[ebx]
 			.if ecx < edx || ecx > edx
-			    .if HM._size[ebx] == edx || ecx < edx
-					dec    edx
-				.endif
 				mov    HM.sel_start[ebx], edx
 				mov    HM.sel_end[ebx],   edx
 				inc    sel_changed
@@ -640,7 +642,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				.if eax == ecx && HM.shift[ebx] != 1
 					dec    edx
 				.endif
-				.if eax == edx || (ecx == edx && !HM.shift[ebx])
+				.if eax >= edx || (ecx >= edx && !HM.shift[ebx])
 					jmp    @skip
 				.endif
 				;???
@@ -699,6 +701,14 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				@@:
 				dec    HM.sel_end[ebx]
 				mov    HM.end_of_line[ebx], 0
+			.endif
+			mov    eax, HM.sel_end[ebx]
+			.if eax > HM.sel_start[ebx]
+				xor    edx, edx
+				div    HM.view_lenx[ebx]
+				.if edx == 0
+					mov    HM.end_of_line[ebx], 1
+				.endif
 			.endif
 		.elseif eax == VK_UP || eax == VK_DOWN
 			.if eax == VK_UP
@@ -856,6 +866,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 			invoke SetScrollPos, HM.hWnd[ebx], SB_VERT, 0, 1 
 		  @pgup:
 		.elseif eax==VK_HOME || eax==VK_END
+			mov    HM.byte_nr[ebx], 0
 			.if eax==VK_HOME
 				mov    ecx, HM.view_lenx[ebx]
 				mov    eax, HM.sel_end[ebx]
@@ -888,7 +899,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				.endif
 				mov    edi, HM._size[ebx]
 				.if !HM.shift[ebx] && (!HM.ctrl[ebx] || edx == eax)
-					inc    eax
+					;inc    eax
 					dec    edi
 				.endif
 				mov    ecx, HM.view_lenx[ebx]
@@ -928,6 +939,11 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 		.endif
 		inc    sel_changed
 	@skip:
+		mov    ecx, HM.sel_end[ebx]
+		.if ecx < HM.view_lenx[ebx] && HM.end_of_line[ebx]
+			mov    HM.end_of_line[ebx], 0
+			invoke PositionCaret
+		.endif
 		.if sel_changed
 			invoke SetScreenColors	
 			invoke InvalidateRect, HM.hWnd[ebx], ADDR HM.sel_rc[ebx], 0
@@ -2371,8 +2387,8 @@ DrawOffset endp
 SetScreenColors proc uses esi edi
 	LOCAL col1B:DWORD
 	LOCAL col1T:DWORD
-	LOCAL sc_start:DWORD
-	LOCAL sc_end:DWORD
+	;LOCAL sc_start:DWORD
+	;LOCAL sc_end:DWORD
 
 	; SetScreenColors is always called after cursor or selection changes.
 	; If selection is differnet from last HEXN_SELCHANGED sent then send a new
@@ -2390,7 +2406,7 @@ SetScreenColors proc uses esi edi
 	mul    HM.view_lenx[ebx]
 	add    ecx, eax    ; ecx points to first visible byte
 	sub    ecx, HM.pointer[ebx]
-	mov    sc_start, ecx
+	mov    HM.sc_start[ebx], ecx
 	mov    eax, HM.view_lenx[ebx]
 	mul    HM.view_leny[ebx]
 	add    ecx, eax
@@ -2399,9 +2415,9 @@ SetScreenColors proc uses esi edi
 	jb     @F
 	mov    ecx, eax
   @@:
-	mov    sc_end, ecx
-	mov    ecx, sc_end
-	sub    ecx, sc_start	
+	mov    HM.sc_end[ebx], ecx
+	mov    ecx, HM.sc_end[ebx]
+	sub    ecx, HM.sc_start[ebx]
 
 	; Reallocate screen color buffers as needed to support large window sizes
 	; Buffer size in bytes = (screen_colors_len * 8 + 8) The "+ 8" avoids a
@@ -2429,7 +2445,7 @@ SetScreenColors proc uses esi edi
   @@:
 	dec    ecx
 	mov    eax, ecx
-	add    eax, sc_start
+	add    eax, HM.sc_start[ebx]
 	mov    eax, [HM.bk_color  +16][ebx]
 	mov    DWORD PTR [esi+ecx*8+0], eax
 	mov    eax, [HM.bk_color  +20][ebx]
@@ -2440,6 +2456,7 @@ SetScreenColors proc uses esi edi
 	mov    DWORD PTR [edi+ecx*8+4], eax
 	test   ecx, ecx
 	jnz    @B
+
 	; HIGHLIGHTING OF BIGGER PRIO. - modified bytes
 	mov    ecx, HM.modified_counter[ebx]
   @@:
@@ -2450,11 +2467,11 @@ SetScreenColors proc uses esi edi
 	mov    eax, ecx
 	shr    eax, 3
 	mov    edi, [HM.modified_bytes+ecx*4][ebx]
-	cmp    edi, sc_end
+	cmp    edi, HM.sc_end[ebx]
 	ja     @next_byte
-	cmp    edi, sc_start
+	cmp    edi, HM.sc_start[ebx]
 	jb     @next_byte
-	sub    edi, sc_start
+	sub    edi, HM.sc_start[ebx]
 	mov    edx, [HM.bk_color  +eax*4+36][ebx]
 	mov    DWORD PTR [esi+edi*8+0], edx
 	mov    edx, [HM.text_color+eax*4+36][ebx]
@@ -2468,60 +2485,27 @@ SetScreenColors proc uses esi edi
 	mov    HM.nm.hdr.code[ebx], HEXN_CUSTOMCOLORS
 	m2m    HM.nm.colors.colors_hex[ebx], HM.screen_colors_st2[ebx]
 	m2m    HM.nm.colors.colors_ansi[ebx], HM.screen_colors_st3[ebx]
-	m2m    HM.nm.colors.sc_start[ebx], sc_start
+	m2m    HM.nm.colors.sc_start[ebx], HM.sc_start[ebx]
 	add    HM.nm.colors.sc_start[ebx], edx
-	m2m    HM.nm.colors.sc_end[ebx], sc_end
+	m2m    HM.nm.colors.sc_end[ebx], HM.sc_end[ebx]
 	add    HM.nm.colors.sc_end[ebx], edx
 	invoke SendNotify
-
-	; CALCULATE BLINKING CARET PIXEL POSITION
-	mov    eax, HM.sel_end[ebx]
-	cmp    eax, sc_end
-	ja     @no_caret
-	cmp    eax, sc_start
-	jb     @no_caret
-	sub    eax, sc_start	
-	xor    edx, edx
-	div    HM.view_lenx[ebx]
-	mov    ecx, edx
-	mul    HM.fon_cy[ebx]
-	xchg   eax, ecx
-	mul    HM.fon_cx[ebx]
-	mov    edx, eax
-	.if HM.input_mode[ebx]
-		add    edx, HM.rc3.left[ebx]
-		add    ecx, HM.rc3.top[ebx]
-	.else
-		mov    eax, 3
-		mul    edx	
-		mov    edx, eax
-		cmp    HM.byte_nr[ebx], 0
-		jz     @F
-		add    edx, HM.fon_cx[ebx]
-		@@:
-		add    edx, HM.rc2.left[ebx]
-		add    ecx, HM.rc2.top[ebx]	
-	.endif
-	mov    HM.caret_posx[ebx], edx
-	mov    HM.caret_posy[ebx], ecx
 	
-	; Update caret position and make it visible if previously hidden
-	.if HM.focus[ebx]
-		invoke SetCaretPos, HM.caret_posx[ebx], HM.caret_posy[ebx]
-		.if !HM.caret_visible[ebx]
-			invoke ShowCaret, HM.hWnd[ebx]
-			mov    HM.caret_visible[ebx], 1	
-		.endif
-	.endif
+	invoke PositionCaret
 	
 	; HIGHLIGHTING OF BIGGER PRIO. - cursor pos
+	; TODO: DELETE THIS; NOT NEEDED WITH CARET POS, BUT UPDATE WITH DOTTED RECT
 	mov    esi, HM.screen_colors_st2[ebx]
 	mov    edi, HM.screen_colors_st3[ebx]
 	mov    ecx, HM.sel_start[ebx]
 	mov    edx, HM.sel_end[ebx]
 	cmp    ecx, edx
-	jnz    @no_cursor
-	sub    edx, sc_start
+	jnz    @F
+	cmp    edx, HM.sc_end[ebx]
+	ja     @no_sel
+	cmp    edx, HM.sc_start[ebx]
+	jb     @no_sel
+	sub    edx, HM.sc_start[ebx]
 	mov    eax, [HM.bk_color  +32][ebx]
 	mov    DWORD PTR [esi+edx*8+0], eax
 	mov    DWORD PTR [edi+edx*8+0], eax
@@ -2529,38 +2513,26 @@ SetScreenColors proc uses esi edi
 	mov    DWORD PTR [esi+edx*8+4], eax
 	mov    DWORD PTR [edi+edx*8+4], eax
 	jmp    @no_sel
-		
-	; Hide caret if previously shown
-	@no_caret:
-	.if HM.focus[ebx]
-		.if HM.caret_visible[ebx]
-			invoke HideCaret, HM.hWnd[ebx]
-			mov    HM.caret_visible[ebx], 0
-		.endif
-	.endif
-
 	; HIGHLIGHTING OF THE BIGGEST PRIO. - selection
-	@no_cursor:
-	mov    ecx, HM.sel_start[ebx]
-	mov    edx, HM.sel_end[ebx]
+  @@:
 	cmp    ecx, edx
 	jb     @F
 	xchg   ecx, edx
   @@:
-	cmp    ecx, sc_end
+	cmp    ecx, HM.sc_end[ebx]
 	ja     @no_sel
-	cmp    edx, sc_start
+	cmp    edx, HM.sc_start[ebx]
 	jb     @no_sel
-	cmp    ecx, sc_start
+	cmp    ecx, HM.sc_start[ebx]
 	ja     @F
-	mov    ecx, sc_start
+	mov    ecx, HM.sc_start[ebx]
   @@:	
 	cmp    ecx, edx
 	jz     @no_sel
-	cmp    ecx, sc_end
+	cmp    ecx, HM.sc_end[ebx]
 	jz     @no_sel
 	push   ecx
-	sub    ecx, sc_start
+	sub    ecx, HM.sc_start[ebx]
 	mov    eax, [HM.bk_color  +24][ebx]
 	mov    DWORD PTR [esi+ecx*8+0], eax
 	mov    eax, [HM.bk_color  +28][ebx]
@@ -2572,10 +2544,7 @@ SetScreenColors proc uses esi edi
 	pop    ecx
 	inc    ecx
 	jmp    @B
-  @no_sel:	
-  
-	; SHOW OR HIDE BLINKING CARET IF EDITOR HAS FOCUS
-
+  @no_sel:  
 	;-----------------
 	ret
 SetScreenColors endp
@@ -2866,5 +2835,75 @@ SendChangeNotify proc code:DWORD, _start:DWORD, _end:DWORD
 	invoke SendNotify
 	ret
 SendChangeNotify endp
+
+PositionCaret proc uses ecx edx
+	; Compute byte offset of caret position and check if visible in window
+	mov    eax, HM.sel_end[ebx]
+	cmp    eax, HM.sc_end[ebx]
+	ja     @no_caret
+	cmp    eax, HM.sc_start[ebx]
+	jb     @no_caret
+	sub    eax, HM.sc_start[ebx]
+	
+	; Calculate vertical pixel offset with end-of-line adjustment
+	.if HM.end_of_line[ebx]
+		dec    eax
+	.endif
+	xor    edx, edx
+	div    HM.view_lenx[ebx]
+	mov    ecx, edx
+	mul    HM.fon_cy[ebx]
+	xchg   eax, ecx
+	
+	; End-of-line adjustment for horizontal pixel offset
+	.if HM.byte_nr[ebx] == 0
+		.if HM.end_of_line[ebx]
+			inc    eax
+		.endif		
+	.else
+		mov    edx, HM.sel_end[ebx]
+		.if edx > HM.sel_start[ebx] && !HM.end_of_line[ebx]
+			dec    eax
+		.endif
+	.endif
+	
+	; Calculate horizontal pixel offset including byte_nr adjustment
+	mul    HM.fon_cx[ebx]
+	mov    edx, eax
+	.if HM.input_mode[ebx]
+		add    edx, HM.rc3.left[ebx]
+		add    ecx, HM.rc3.top[ebx]
+	.else
+		mov    eax, 3
+		mul    edx	
+		mov    edx, eax
+		.if HM.byte_nr[ebx]
+			add    edx, HM.fon_cx[ebx]
+		.endif
+		add    edx, HM.rc2.left[ebx]
+		add    ecx, HM.rc2.top[ebx]	
+	.endif
+	mov    HM.caret_posx[ebx], edx
+	mov    HM.caret_posy[ebx], ecx
+	
+	; Update caret position and make it visible if previously hidden
+	.if HM.focus[ebx]
+		invoke SetCaretPos, HM.caret_posx[ebx], HM.caret_posy[ebx]
+		.if !HM.caret_visible[ebx]
+			invoke ShowCaret, HM.hWnd[ebx]
+		.endif
+	.endif
+	mov    HM.caret_visible[ebx], 1	
+	ret
+
+	; Hide caret if previously shown
+	@no_caret:
+	.if HM.focus[ebx] && HM.caret_visible[ebx]
+		invoke HideCaret, HM.hWnd[ebx]
+	.endif
+	mov    HM.caret_visible[ebx], 0
+	
+	ret
+PositionCaret endp
 
 End DllEntry
