@@ -604,7 +604,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 			mov    ecx, HM.sel_start[ebx]
 			mov    edx, HM.sel_end[ebx]
 			.if ecx < edx || ecx > edx
-			    .if HM._size[ebx] == edx
+			    .if HM._size[ebx] == edx || ecx < edx
 					dec    edx
 				.endif
 				mov    HM.sel_start[ebx], edx
@@ -846,16 +846,30 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 			.if eax==VK_HOME
 				mov    ecx, HM.view_lenx[ebx]
 				mov    eax, HM.sel_end[ebx]
+				.if HM.ctrl[ebx] == 1
+					mov    edx, HM.sel_start[ebx]
+					.if edx < eax
+						xchg   edx, eax
+					.endif
+				.endif
 				xor    edx, edx
 				div    ecx
 				cmp    edx, 0
 				jz     @skip
+				cmp    HM.shift[ebx], 1
+				jz     @F
 				sub    HM.sel_start[ebx], edx
+				@@:
 				sub    HM.sel_end[ebx],   edx
-				mov    eax, 1
 			.else
 				mov    ecx, HM.view_lenx[ebx]
 				mov    eax, HM.sel_end[ebx]
+				.if HM.ctrl[ebx] == 1
+					mov    edx, HM.sel_start[ebx]
+					.if edx > eax
+						xchg   edx, eax
+					.endif
+				.endif
 				inc    eax
 				xor    edx, edx
 				div    ecx
@@ -863,9 +877,18 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				jz     @skip
 				mov    eax, HM.view_lenx[ebx]
 				sub    eax, edx
+				mov    ecx, HM.sel_end[ebx]
+				.if HM.shift[ebx] || HM.ctrl[ebx]
+					inc    eax
+				.endif
+				.if HM.sel_start[ebx] < ecx && eax == HM.view_lenx[ebx]
+					jmp    @skip
+				.endif
+				cmp    HM.shift[ebx], 1
+				jz     @F
 				add    HM.sel_start[ebx], eax
+				@@:
 				add    HM.sel_end[ebx],   eax
-				mov    eax, HM.view_lenx[ebx]
 			.endif
 		.else
 			; Forward unrecognized WM_KEYDOWN to parent window for custom shortcuts
