@@ -640,7 +640,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				.if eax == ecx && HM.shift[ebx] != 1
 					dec    edx
 				.endif
-				.if eax == edx || ecx == edx
+				.if eax == edx || (ecx == edx && !HM.shift[ebx])
 					jmp    @skip
 				.endif
 				;???
@@ -668,6 +668,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				inc    HM.sel_start[ebx]
 				@@:	
 				inc    HM.sel_end[ebx]
+				mov    HM.end_of_line[ebx], 0
 			.else
 				xor    ecx, ecx
 				cmp    HM.sel_end[ebx], ecx
@@ -697,6 +698,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				dec    HM.sel_start[ebx]
 				@@:
 				dec    HM.sel_end[ebx]
+				mov    HM.end_of_line[ebx], 0
 			.endif
 		.elseif eax == VK_UP || eax == VK_DOWN
 			.if eax == VK_UP
@@ -865,15 +867,15 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				.endif
 				xor    edx, edx
 				div    ecx
-				.if edx == 0 && HM.end_of_line[ebx] && HM.sel_end[ebx] >= ecx
+				.if edx == 0 && HM.end_of_line[ebx] && HM.sel_end[ebx] >= ecx; TODO: is last condition needed?
 					mov    edx, ecx
 				.endif
-				mov    HM.end_of_line[ebx], 0; TODO: remove later
 				cmp    HM.shift[ebx], 1
 				jz     @F
 				sub    HM.sel_start[ebx], edx
 				@@:
 				sub    HM.sel_end[ebx],   edx
+				mov    HM.end_of_line[ebx], 0
 			.else
 				cmp    HM.end_of_line[ebx], 1
 				jz     @skip
@@ -893,7 +895,6 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				xor    edx, edx
 				div    ecx
 				sub    ecx, edx
-				mov    HM.end_of_line[ebx], 1; TODO: remove later
 				.if HM.shift[ebx]
 					mov    eax, edi
 					sub    eax, HM.sel_end[ebx]
@@ -917,6 +918,7 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 					add    HM.sel_end[ebx], ecx
 					add    HM.sel_start[ebx], ecx					
 				.endif
+				mov    HM.end_of_line[ebx], 1
 			.endif
 		.else
 			; Forward unrecognized WM_KEYDOWN to parent window for custom shortcuts
