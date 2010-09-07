@@ -1019,7 +1019,7 @@ ttrack:
 	  @@:
 		invoke SendMessage, HM.hWnd[ebx], WM_VSCROLL, ecx, 0
 ;$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
-	.elseif eax==WM_LBUTTONDOWN || eax==WM_LBUTTONUP || eax==WM_MOUSEMOVE && wParam == MK_LBUTTON
+	.elseif eax==WM_LBUTTONDOWN || eax==WM_LBUTTONUP || eax==WM_MOUSEMOVE && (wParam & MK_LBUTTON)
 		.if eax==WM_LBUTTONDOWN
 			mov    hex_set2, 0
 			invoke SetCapture, HM.hWnd[ebx]
@@ -1032,6 +1032,10 @@ ttrack:
 		.elseif eax==WM_LBUTTONUP
 			invoke ReleaseCapture
 		.endif
+		invoke GetKeyState, VK_SHIFT
+		and    eax, 0FFFFh
+		shr    eax, 15
+		mov    HM.shift[ebx], eax
 		mov    eax, lParam
 		and    eax, 0ffffh
 		.if eax >= HM.rc2.left[ebx] && hex_set2 == 0
@@ -1067,36 +1071,36 @@ ttrack:
 			mov    eax, HM.vscrollpos[ebx]
 			mul    HM.view_lenx[ebx]
 			add    edi, eax
+			mov    ecx, HM._size[ebx]
+			cmp    edi, ecx
+			jbe    @F
+			mov    edi, ecx
+			@@:
 			.if uMsg==WM_LBUTTONDOWN
-				mov    ecx, HM._size[ebx]
-				cmp    edi, ecx
-				jbe    @F
-				mov    edi, ecx
-				@@:
-				mov    eax, HM.sel_start[ebx]
-				mov    HM.sel_last[ebx], eax
-				invoke InvalidateSel, HM.hWnd[ebx]
 				mov    hex_set1, 1
 				mov    hex_set2, 0
-				mov    HM.sel_start[ebx], edi
-				mov    HM.sel_end[ebx],   edi
-				invoke SetScreenColors
-				mov    eax, HM.sel_end[ebx]
-				mov    HM.sel_last[ebx], eax
 				mov    HM.byte_nr[ebx], 0
-				invoke InvalidateSel, HM.hWnd[ebx] ; ??? maybe remove	
+				.if HM.shift[ebx] == 1
+					mov    eax, HM.sel_end[ebx]
+					mov    HM.sel_last[ebx], eax
+					mov    HM.sel_end[ebx], edi					
+				.else
+					mov    eax, HM.sel_start[ebx]
+					mov    HM.sel_last[ebx], eax
+					invoke InvalidateSel, HM.hWnd[ebx]
+					mov    HM.sel_start[ebx], edi
+					mov    HM.sel_end[ebx], edi
+					mov    HM.sel_last[ebx], edi
+				.endif				
+				invoke SetScreenColors
+				invoke InvalidateSel, HM.hWnd[ebx]
 			.elseif uMsg==WM_LBUTTONUP
 				mov    hex_set2, 1
 				cmp    HM.timer_direction[ebx], 0
 				jnz    @F
 				mov    HM.sel_end[ebx], edi
-			  @@:	
+			    @@:
 				invoke KillTimer, HM.hWnd[ebx], 100
-				mov    ecx, HM._size[ebx]
-				cmp    HM.sel_end[ebx], ecx
-				jb     @no_size_over
-				mov    HM.sel_end[ebx], ecx
-			  @no_size_over:
 				invoke SetScreenColors
 				mov    HM.timer_direction[ebx], 0
 				mov    eax, HM.sel_end[ebx]
@@ -1119,11 +1123,6 @@ ttrack:
 					mov    HM.timer_direction[ebx], 2
 					@@:
 				.elseif eax != edi
-					mov    ecx, HM._size[ebx]
-					cmp    edi, ecx
-					jbe    @F
-					mov    edi, ecx
-					@@:
 					mov    HM.sel_last[ebx], eax
 					invoke KillTimer, HM.hWnd[ebx], 100
 					mov    HM.timer_direction[ebx], 0
@@ -2059,7 +2058,7 @@ DoRedo proc
 	ret
 DoRedo endp
 
-InvalidateSel proc uses edi hWin:DWORD
+InvalidateSel proc uses esi edi hWin:DWORD
 	LOCAL rc:RECT
 	LOCAL tem:DWORD
 
