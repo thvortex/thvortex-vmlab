@@ -884,11 +884,20 @@ ShineInHexProc proc uses esi edi ebx hWin:DWORD, uMsg:DWORD, wParam:DWORD, lPara
 				mov    eax, HM.view_lenx[ebx]
 				sub    eax, edx
 				mov    ecx, HM.sel_end[ebx]
-				.if HM.shift[ebx] || HM.ctrl[ebx]
+				.if HM.shift[ebx] || HM.ctrl[ebx] && HM.sel_start[ebx] != ecx
 					inc    eax
 				.endif
-				.if HM.sel_start[ebx] < ecx && eax == HM.view_lenx[ebx]
-					jmp    @skip
+				.if eax == HM.view_lenx[ebx]
+					cmp    HM.sel_start[ebx], ecx
+					jb     @skip
+					cmp    HM.ctrl[ebx], 1
+					jz     @skip
+				.endif
+				.if HM.shift[ebx]
+					mov    edx, HM.sel_end[ebx]
+					add    edx, eax
+					cmp    edx, HM.sel_start[ebx]
+					jz     @skip
 				.endif
 				cmp    HM.shift[ebx], 1
 				jz     @F
