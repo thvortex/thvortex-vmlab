@@ -2,7 +2,7 @@
 // Component Name: ATMega168 "TIMER2" peripheral.
 //
 // Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
-// Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
+// Copyright (C) 2009, 2010, 2011 Wojciech Stryjewski <thvortex@gmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
@@ -35,3 +35,6 @@
 #define GDT_LOG      GADGET12
 #define GDT_TOP      GADGET13
 #define GDT_CRPT     GADGET14
+
+#define GDT_TIFRn    GADGET15
+#define GDT_TIMSKn   GADGET16

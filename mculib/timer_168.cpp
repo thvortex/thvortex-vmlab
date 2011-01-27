@@ -3,7 +3,7 @@
 // is included by a different .cpp file for each of the timer types.
 //
 // Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
-// Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
+// Copyright (C) 2009, 2010, 2011 Wojciech Stryjewski <thvortex@gmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
@@ -77,15 +77,17 @@ const int MASK[] = {
 #ifdef TIMER_N
 DECLARE_REGISTERS
    TCCRnA, TCCRnB, TCCRnC, TCNTn, TCNTnH,
-   OCRnA, OCRnAH, OCRnB, OCRnBH, ICRn, ICRnH
+   OCRnA, OCRnAH, OCRnB, OCRnBH, ICRn, ICRnH,
+   TIFRn, TIMSKn
 END_REGISTERS
 #else
 
 DECLARE_REGISTERS
-   TCCRnA, TCCRnB, TCNTn, OCRnA, OCRnB
+   TCCRnA, TCCRnB, TCNTn, OCRnA, OCRnB,
 #ifdef TIMER_2
-   ,ASSR
+   ASSR,
 #endif
+   TIFRn, TIMSKn
 END_REGISTERS
 
 #endif // #ifdef TIMER_N
@@ -104,6 +106,15 @@ DECLARE_INTERRUPTS
    ,CAPT
 #endif
 END_INTERRUPTS 
+
+// Mapping of the DECLARE_INTERRUPTS enum numbers to bit numbers in the
+// TIFRn and TIMSKn registers. These bit definitions must be in the same
+// order as the enum above.
+#ifdef TIMER_N
+   const int INT_BIT[] = { 1, 2, 0, 5 };
+#else
+   const int INT_BIT[] = { 1, 2, 0 };
+#endif
 
 // This type is used to keep track of elapsed CPU and I/O clock cycles. Using
 // an unsigned type allows the cycle count to function correctly even when it
@@ -245,6 +256,8 @@ REGISTERS_VIEW
    DISPLAY(TCNTn,  GDT_TCNTn,  *, *, *, *, *, *, *, *)
    DISPLAY(OCRnA,  GDT_OCRnA,  *, *, *, *, *, *, *, *)
    DISPLAY(OCRnB,  GDT_OCRnB,  *, *, *, *, *, *, *, *)
+   DISPLAY(TIFRn,  GDT_TIFRn,  *, *, *, *, *, OCF0B, OCF0A, TOV0)
+   DISPLAY(TIMSKn, GDT_TIMSKn, *, *, *, *, *, OCIE0B, OCIE0A, TOIE0)
 END_VIEW
 #endif
 
@@ -262,6 +275,8 @@ REGISTERS_VIEW
    DISPLAY(OCRnB,  GDT_OCRnBL, *, *, *, *, *, *, *, *)
    DISPLAY(ICRnH,  GDT_ICRnH,  *, *, *, *, *, *, *, *)
    DISPLAY(ICRn,   GDT_ICRnL,  *, *, *, *, *, *, *, *)
+   DISPLAY(TIFRn,  GDT_TIFRn,  *, *, ICFn, *, *, OCFnB, OCFnA, TOVn)
+   DISPLAY(TIMSKn, GDT_TIMSKn, *, *, ICIEn, *, *, OCIEnB, OCIEnA, TOIEn)
 END_VIEW
 #endif
 
@@ -274,6 +289,8 @@ REGISTERS_VIEW
    DISPLAY(OCRnA,  GDT_OCRnA,  *, *, *, *, *, *, *, *)
    DISPLAY(OCRnB,  GDT_OCRnB,  *, *, *, *, *, *, *, *)
    DISPLAY(ASSR,   GDT_ASSR,   *, EXCLK, AS2, TCN2UB, OCR2AUB, OCR2BUB, TCR2AUB, TCR2BUB)
+   DISPLAY(TIFRn,  GDT_TIFRn,  *, *, *, *, *, OCF2B, OCF2A, TOV2)
+   DISPLAY(TIMSKn, GDT_TIMSKn, *, *, *, *, *, OCIE2B, OCIE2A, TOIE2)
 END_VIEW
 #endif
 
@@ -294,6 +311,7 @@ bool Is_disabled(BOOL pPRRWanted = TRUE);
 void Update_register(REGISTER_ID, WORDSZ);
 void On_XCLK_edge(EDGE pEdge);
 void On_ICP_edge(EDGE pEdge);
+void Interrupt(INTERRUPT_ID pId);
 
 //==============================================================================
 // Callback functions, On_xxx(...)
@@ -649,6 +667,27 @@ void Update_register(REGISTER_ID pId, WORDSZ pData)
           Dirty = true;
        end_register
 #endif
+
+       case_register(TIMSKn, TIMSKn_MASK) // Timer Interrupt Mask Register
+       //------------------------------------------------------
+          // Writing 0/X to mask bit will disable the interrupt
+          for(int i = 0; i < countof(INT_BIT); i++) {
+             SET_INTERRUPT_ENABLE(i, pData[INT_BIT[i]] == 1);
+          }
+          REG(TIMSKn) = pData & TIMSKn_MASK;
+       end_register
+
+       case_register(TIFRn, TIMSKn_MASK) // Timer Interrupt Flag Register
+       //------------------------------------------------------
+          // Writing 1 bit clears interrupt flag; writing 0 or X has no
+          // effect and flag bit retains current value.
+          for(int i = 0; i < countof(INT_BIT); i++) {
+             if(pData[INT_BIT[i]] == 1) {
+                SET_INTERRUPT_FLAG(i, FLAG_CLEAR);
+                REG(TIFRn).set_bit(INT_BIT[i], 0);
+             }
+          }
+       end_register
    }
 }
 
@@ -731,7 +770,7 @@ void On_ICP_edge(LOGIC pState)
           (REG(TCCRnB)[6] == 1 && pState == 1) ) {
                    
          // Generate CAPT interrupt and copy TCNTn register to ICRn
-         SET_INTERRUPT_FLAG(CAPT, FLAG_SET);
+         Interrupt(CAPT);
          REG(ICRnH) = REG(TCNTnH);
          REG(ICRn) = REG(TCNTn);
       }
@@ -956,6 +995,13 @@ void On_gadget_notify(GADGET pGadget, int pCode)
 #endif   
 }
 
+void On_interrupt_start(INTERRUPT_ID pId)
+//***********************************
+// Called when MCU begins to execute an interrupt. Clear the flag bit.
+{
+   REG(TIFRn).set_bit(INT_BIT[pId], 0);
+}
+
 //==============================================================================
 // Internal functions (non-callback). Prototypes defined above
 //==============================================================================
@@ -1090,13 +1136,13 @@ void Async_sleep_check(int pMode)
          CAT_TIMER, WARN_MISC);
    }
    if(Async_interrupt & (1 << OVF)) {
-      SET_INTERRUPT_FLAG(OVF, FLAG_SET);
+      Interrupt(OVF);
    }
    if(Async_interrupt & (1 << CMPA)) {
-      SET_INTERRUPT_FLAG(CMPA, FLAG_SET);
+      Interrupt(CMPA);
    }
    if(Async_interrupt & (1 << CMPB)) {
-      SET_INTERRUPT_FLAG(CMPB, FLAG_SET);
+      Interrupt(CMPB);
    }   
 }
 #endif // #ifdef TIMER_2
@@ -1188,7 +1234,7 @@ void Count()
 
    // Set overflow flag when count == TOP/MAX/BOTTOM depending on mode
    if(REGHL(TCNTn) == Value(Overflow)) {
-      SET_INTERRUPT_FLAG(OVF, FLAG_SET);
+      Interrupt(OVF);
       Async_interrupt |= (1 << OVF);
    }
 
@@ -1227,18 +1273,18 @@ void Count()
       if(!Compare_blocked) {
          if(REGHL(TCNTn) == REGHL(OCRnA)) {
             Action_on_port(OCA, Action_comp_A);
-            SET_INTERRUPT_FLAG(CMPA, FLAG_SET);
+            Interrupt(CMPA);
             Async_interrupt |= (1 << CMPA);
          }
          if(REGHL(TCNTn) == REGHL(OCRnB)) {
             Action_on_port(OCB, Action_comp_B);
-            SET_INTERRUPT_FLAG(CMPB, FLAG_SET);
+            Interrupt(CMPB);
             Async_interrupt |= (1 << CMPB);
          }
 #ifdef TIMER_N         
          // If using ICR as TOP, then generate interrupt on compare match
          if(Top == VAL_ICR && REGHL(TCNTn) == REGHL(ICRn)) {
-            SET_INTERRUPT_FLAG(CAPT, FLAG_SET);
+            Interrupt(CAPT);
          }
 #endif
       }
@@ -1759,4 +1805,22 @@ void Log_register_write(int pId, WORD8 pData, unsigned char pMask)
          Log("Write register %s: $%02X", strName, pData.d() & pMask);
       }
    }
+}
+
+void Interrupt(int pId)
+//*************************
+// Generate interrupt and set flag bit in TIFRn
+{
+   // TODO: Workaround for VMLAB 3.15 which does not automatically disable
+   // all interrupts after a MCU reset. Since SET_INTERRUPT_ENABLE() has no
+   // effect from On_reset(), it's possible that a previously enabled interrupt
+   // will remain enabled after reset even though the mask bit is 0 in TIMSKn
+   // after reset.
+   // However, since this is the only place where a flag can be set, we
+   // can call SET_INTERRUPT_ENABLE() here to ensure that VMLAB's internal
+   // interrupt enable matches the contents of the mask bit.
+   SET_INTERRUPT_ENABLE(pId, REG(TIMSKn)[INT_BIT[pId]] == 1);   
+   
+   SET_INTERRUPT_FLAG(pId, FLAG_SET);
+   REG(TIFRn).set_bit(INT_BIT[pId], 1);
 }

@@ -2,7 +2,7 @@
 // Component Name: ATMega168 "TIMERN" (16 bit) peripheral.
 //
 // Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
-// Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
+// Copyright (C) 2009, 2010, 2011 Wojciech Stryjewski <thvortex@gmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
@@ -33,6 +33,7 @@
 #define WORDSZ WORD16
 #define TCCRnB_MASK 0xDF
 #define TCCRnB_RW_MASK 0xDF
+#define TIMSKn_MASK 0x27
 #define REGHL(x) (*((WORD16LE *) &REG(x)))
 
 #include "timer_168.cpp"
