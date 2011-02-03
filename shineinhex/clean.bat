@@ -1,1 +1,0 @@
-del *.obj *.dll *.exp *.lib *.res

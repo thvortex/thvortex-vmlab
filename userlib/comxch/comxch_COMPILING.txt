@@ -1,7 +1,0 @@
-COM Port Exchanger Components v1.0
-----------------------------------------------
-
-1. Add the Borland BCC55 command directory to your path:
-path=%path%;C:\Borland\BCC55\Bin
-
-2. Run the "make" command in the same directory as the "makefile.mak"
