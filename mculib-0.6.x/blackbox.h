@@ -485,7 +485,7 @@ inline void BREAK(const char *pMessage = NULL) {(*PRIVATE::_Break)(PRIVATE::_Ele
 inline void PRINT(const char *text) {(*PRIVATE::_Print)(text);}
 inline void REMIND_ME(double delay, int param = 0) {(*PRIVATE::_Remind_me)(PRIVATE::_Element, delay, param);}
 inline void SET_LOGIC(PIN pin, LOGIC value, double delay = 0) {(*PRIVATE::_Set_logic)(PRIVATE::_Element, pin, value, delay);}
-inline void SET_VOLTAGE(PIN pin, LOGIC value) {(*PRIVATE::_Set_voltage)(PRIVATE::_Element, pin, value);}
+inline void SET_VOLTAGE(PIN pin, double value) {(*PRIVATE::_Set_voltage)(PRIVATE::_Element, pin, value);}
 inline LOGIC GET_LOGIC(PIN pin) {return (*PRIVATE::_Get_logic)(PRIVATE::_Element, pin); }
 inline double GET_VOLTAGE(PIN pin) {return (*PRIVATE::_Get_voltage)(PRIVATE::_Element, pin);}
 inline void TRACE(BOOL enable) {(*PRIVATE::_Trace)(PRIVATE::_Element, enable); }
