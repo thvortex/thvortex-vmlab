@@ -172,27 +172,71 @@ typedef PRIVATE::WORDX<PRIVATE::WORDHL<UINT, PRIVATE::WORDBE<WORD16> >, 0xFFFFFF
 // Pin declaration macros
 //
 
-#define DECLARE_PINS \
-namespace PRIVATE { \
-	const char *_Pin_list_begin = "{"; \
-}
+#define DECLARE_PINS
 
 #define END_PINS \
-namespace PRIVATE { \
-	const char *_Pin_list_end = "}"; \
+namespace PRIVATE {\
+   PIN_ENTRY _PINLIST_END("}", sizeof("}"));\
 }\
 void GetPins(const char **pBegin, const char **pEnd) {\
-	*pBegin = PRIVATE::_Pin_list_begin;\
-   *pEnd = PRIVATE::_Pin_list_end;\
+   PRIVATE::PIN_ENTRY::GetPins(pBegin, pEnd);\
 }
 
 #define _PIN_ENTRY(name, value, tmask, tstr) \
 namespace PRIVATE {\
-	const char * name = "@" #name "";\
-   const char * _INDEX_##name = "@" #value "";\
-   const char * _TYPE_##name = tstr;\
+   PIN_ENTRY _PIN_##name("@" #name, sizeof("@" #name));\
+   PIN_ENTRY _INDEX_##name("@" #value, sizeof("@" #value));\
+   PIN_ENTRY _TYPE_##name(tstr, sizeof(tstr));\
 }\
 const PIN name = value;
+
+// Helper class for pin declarations
+//
+
+namespace PRIVATE {
+   class PIN_ENTRY {
+      private:
+         const char *text;
+         PIN_ENTRY *next;
+         
+         static int length;
+         static char *buffer;         
+         static PIN_ENTRY *last;
+      public:
+         PIN_ENTRY(const char *t, int size) : text(t), next(NULL)
+         {            
+            if (last) last->next = this;
+            last = this;
+            length += size;
+         }
+         ~PIN_ENTRY()
+         {
+            if(buffer == NULL) return;
+            delete[] buffer;
+            buffer = NULL;
+         }         
+         static void GetPins(const char **pBegin, const char **pEnd);
+   };
+
+   int PIN_ENTRY::length = 0;
+   char *PIN_ENTRY::buffer = NULL;
+   PIN_ENTRY *PIN_ENTRY::last = NULL;
+
+   PIN_ENTRY _PIN_LISTBEGIN("{", sizeof("{"));
+
+   void PIN_ENTRY::GetPins(const char **pBegin, const char **pEnd)
+   {
+      if(buffer == NULL) buffer = new char[length];
+      if(buffer == NULL) { *pBegin = *pEnd = NULL; return; }
+      char *dst = buffer;
+
+      for(PIN_ENTRY *pin = &_PIN_LISTBEGIN; pin; pin = pin->next, *dst++ = '\0')
+         for(const char *src = pin->text; *src; src++) *dst++ = *src;
+         
+      *pBegin = buffer;
+      *pEnd = buffer + length - 2;
+   }
+}
 
 // Macros for register mapping (only for micro stuff)
 //
@@ -643,11 +687,11 @@ public:
    //**************************************
    // Default constructor. All bits set to UNKNOWN.
 
-   inline WORDX(T::TYPE pInteger) : T(-1, pInteger) {}
+   inline WORDX(typename T::TYPE pInteger) : T(-1, pInteger) {}
    //**************************************
    // Constructor, upon an integer. Bits are known.
    
-   inline WORDX(T::TYPE pDefined, T::TYPE pData) : T(pDefined, pData) {}
+   inline WORDX(typename T::TYPE pDefined, typename T::TYPE pData) : T(pDefined, pData) {}
    //**************************************
    // Constructor, upon two values
 
@@ -829,7 +873,7 @@ class WORDLE
 // parameter "T" is a WORDX type used to create the larger WORDHL instance.
 {
    public:
-      typedef T::TYPE TYPE;
+      typedef typename T::TYPE TYPE;
       T Low;
       T High;
 };
@@ -841,7 +885,7 @@ class WORDBE
 // parameter "T" is a WORDX type used to create the larger WORDHL instance.
 {
    public:
-      typedef T::TYPE TYPE;
+      typedef typename T::TYPE TYPE;
       T High;
       T Low;
 };
