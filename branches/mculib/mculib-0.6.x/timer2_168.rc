@@ -2,7 +2,7 @@
 // Component Name: ATMega168 "TIMER2" peripheral.
 //
 // Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
-// Copyright (C) 2009 Wojciech Stryjewski <thvortex@gmail.com>
+// Copyright (C) 2009, 2011 Wojciech Stryjewski <thvortex@gmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
@@ -46,11 +46,11 @@
 
 // Register displays must be always be coded with the "WORD_8_VIEW_c" class name.
 //
-WINDOW_USER_1 DIALOG 0, 0, WIDTH, 75
+WINDOW_USER_1 DIALOG 0, 0, WIDTH, 75+12
 STYLE WS_CHILD | WS_VISIBLE
 FONT 8, "MS Sans Serif"
 {
- CONTROL "", EXPAND_FRAME, "button", BS_GROUPBOX | WS_CHILD | WS_VISIBLE | WS_GROUP, 2, 0, WIDTH - 6, 72
+ CONTROL "", EXPAND_FRAME, "button", BS_GROUPBOX | WS_CHILD | WS_VISIBLE | WS_GROUP, 2, 0, WIDTH - 6, 72+12
  CONTROL "", EXPAND_BUTTON, "button", BS_AUTOCHECKBOX | BS_PUSHLIKE | WS_CHILD | WS_VISIBLE, 7, 0, 8, 8
 
  CONTROL "", GDT_TCCRnA + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 13, 28, 8
@@ -66,17 +66,22 @@ FONT 8, "MS Sans Serif"
  CONTROL "", GDT_ASSR, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 36, 42, 10 
  CONTROL "", GDT_ASSR + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 37, 28, 8 
 
- CONTROL "Clock:", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 61, 28, 10
- CONTROL "?",   GDT_CLOCK, "static", WS_CHILD | WS_VISIBLE, 26, 61, 52, 10
- CONTROL "Mode:", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 49, 28, 10
- CONTROL "?",   GDT_MODE, "static", WS_CHILD | WS_VISIBLE, 26, 49, 50, 10
+ CONTROL "", GDT_TIMSKn, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 34, 48, 42, 10 
+ CONTROL "", GDT_TIMSKn + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 49, 28, 8 
+ CONTROL "", GDT_TIFRn, "WORD_8_VIEW_c", WS_CHILD | WS_VISIBLE, 106, 48, 42, 10
+ CONTROL "", GDT_TIFRn + 100, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 49, 24, 8
+ 
+ CONTROL "Clock:", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 61+12, 28, 10
+ CONTROL "?",   GDT_CLOCK, "static", WS_CHILD | WS_VISIBLE, 26, 61+12, 52, 10
+ CONTROL "Mode:", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 4, 49+12, 28, 10
+ CONTROL "?",   GDT_MODE, "static", WS_CHILD | WS_VISIBLE, 26, 49+12, 50, 10
  CONTROL "$??", GDT_BUFA, "static", SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE | WS_DISABLED, 149, 24, 15, 10
  CONTROL "$??", GDT_BUFB, "static", SS_LEFT | SS_SUNKEN | WS_CHILD | WS_VISIBLE | WS_DISABLED, 149, 36, 15, 10
- CONTROL "Top:", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 61, 17, 10
- CONTROL "?",   GDT_TOP, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 96, 61, 22, 10
- CONTROL "Log", GDT_LOG, "button", BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 137, 61, 25, 8
+ CONTROL "Top:", -1, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 80, 61+12, 17, 10
+ CONTROL "?",   GDT_TOP, "static", SS_LEFT | WS_CHILD | WS_VISIBLE, 96, 61+12, 22, 10
+ CONTROL "Log", GDT_LOG, "button", BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 137, 61+12, 25, 8
  CONTROL "BUF", GDT_BUF, "static", SS_LEFT | WS_CHILD | WS_VISIBLE | WS_DISABLED, 149, 13, 16, 8
- CONTROL "Async Corrupt", GDT_CRPT, "button", BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 106, 49, 60, 8
+ CONTROL "Async Corrupt", GDT_CRPT, "button", BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 106, 49+12, 60, 8
 }
 
 // Info displayed under "Version" tab in Windows Explorer. Due to a serious bug

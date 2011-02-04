@@ -2,7 +2,7 @@
 // Component Name: ATMega168 "TIMERN" (16 bit) peripheral.
 //
 // Copyright (C) 2009 Advanced MicroControllers Tools (http://www.amctools.com/)
-// Copyright (C) 2009-2010 Wojciech Stryjewski <thvortex@gmail.com>
+// Copyright (C) 2009, 2010, 2011 Wojciech Stryjewski <thvortex@gmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
@@ -40,3 +40,6 @@
 #define GDT_LOG      GADGET11
 #define GDT_TOP      GADGET12
 #define GDT_TMP      GADGET21
+
+#define GDT_TIFRn    GADGET22
+#define GDT_TIMSKn   GADGET23
