@@ -160,6 +160,7 @@ DECLARE_VAR
    uint _Async_prescaler;  // Explicit prescaler count for asynchronous mode
    uint _Async_interrupt;  // Bitflags of any interrupts from last async tick
    BOOL _OCA_toggle_ok;    // True if toggle on OCA pin allowed by waveform
+   uint _WA_aim_io_cycles; // Work around old_io_cycles
 #ifdef TIMER_2
    WORD8 _Tcnt_async;      // TCNT2 seens by MCU when TIMER2 in async mode
    uint _Async_ticks;      // Number of times Async_tick() has been called
@@ -209,6 +210,7 @@ END_VAR
 #define OCA_toggle_ok VAR(_OCA_toggle_ok)
 #define ACIC_enabled VAR(_ACIC_enabled)
 #define ICP_last VAR(_ICP_last)
+#define WA_aim_io_cycles VAR(_WA_aim_io_cycles)
 
 // Constant WORD8 value with all bits unknown. Returned by On_register_read()
 // if the timer registers are accessed while the timer is disabled due to
@@ -275,7 +277,7 @@ REGISTERS_VIEW
 END_VIEW
 #endif
 
-void Go();                      // Function prototypes
+void Go(uint);                  // Function prototypes
 void Count();                   //
 void Async_tick();
 void Async_change();
@@ -667,8 +669,17 @@ void On_remind_me(double pTime, int pAux)
    if(Clock_source == CLK_INTERNAL) {
       if(TSM && Timer_period != 1)   // TSM holds prescaler not direct clock
          return;
-      Count();
-      Go();
+
+      // TODO: There is a problem with GET_MICRO_INFO(INFO_CPU_CYCLES) getting
+      // called from the On_remind_me() callback if the CPU is in the middle of
+      // a multi-cycle instruction. Although On_remind_me() runs at the correct
+      // time, the INFO_CPU_CYCLE count only increments AFTER the multi-cycle
+      // instruction has finished executing. The WA_aim_io_cycles variable
+      // contains the cycle time at which we EXPECT On_remind_me() to run. In
+      // all other instances where Go() is called, we pass Get_io_cycles()
+      // instead.
+      Count();      
+      Go(WA_aim_io_cycles);
    }
    
    // If using asynchronous 32kHz XTAL, always increment prescaler and schedule
@@ -820,7 +831,7 @@ void On_notify(int pWhat)
          if(wasDisabled & !Is_disabled()) {
             Log("Enabled by PRR");
             Dirty = true;
-            Go();
+            Go(Get_io_cycles());
          }
          break;
 
@@ -830,7 +841,7 @@ void On_notify(int pWhat)
          if(!wasDisabled && Is_disabled()) {
             Log("Disabled by PRR");
             Dirty = true;
-            Go();
+            Go(Get_io_cycles());
          }
          break;
 
@@ -857,7 +868,7 @@ void On_notify(int pWhat)
             Dirty = true;
          }
          
-         Go();
+         Go(Get_io_cycles());
          break;
 
 #ifdef TIMER_N      
@@ -927,7 +938,7 @@ void On_sleep(int pMode)
 #endif         
    
       Dirty = true;
-      Go();
+      Go(Get_io_cycles());
    }
 }
 
@@ -1090,7 +1101,7 @@ void Async_sleep_check(int pMode)
 }
 #endif // #ifdef TIMER_2
 
-void Go()
+void Go(uint pCurrentCycles)
 //******
 // Schedule the next timer tick if the counter is not disabled and using the
 // internal clock source. Called on every timer tick, each time the counter
@@ -1098,12 +1109,16 @@ void Go()
 // is updated each time to cancel any already pending ticks which may no longer
 // be valid. For TIMER2 in 32kHz asynchronous mode, this function never
 // schedules timer ticks.
+// TODO: Once GET_MICRO_INFO(INFO_CPU_CYCLES) works correctly when called from
+// inside On_remind_me(), the Go() function should always use Get_io_cycles()
+// and use pCurrentCycles
 {
    if(Is_disabled(false)) {
       // Track when prescaler clock first became disabled due to sleep mode
       // but not due to PRR (which only stops timer clock and not prescaler)
       if(!Last_disabled)
-         Last_disabled = Get_io_cycles();
+         //Last_disabled = Get_io_cycles();
+         Last_disabled = pCurrentCycles;
       return;
    }
    
@@ -1120,7 +1135,10 @@ void Go()
    if(Clock_source == CLK_INTERNAL) {
       if(TSM && Timer_period != 1) // TSM only holds prescaler not direct clock
          return;
-      uint cycles = Get_io_cycles() - Last_PSR;
+      //uint cycles = Get_io_cycles() - Last_PSR;
+      uint cycles = pCurrentCycles - Last_PSR;
+      //WA_aim_io_cycles = Get_io_cycles() + Timer_period - (cycles % Timer_period);
+      WA_aim_io_cycles = pCurrentCycles + Timer_period - (cycles % Timer_period);
       REMIND_ME2(Timer_period - (cycles % Timer_period), ++Tick_signature);      
    }
 }
@@ -1587,7 +1605,7 @@ void Update_clock_source()
    }
 
    // Re-schedule pending timer tick to reflect new prescaler value
-   Go();
+   Go(Get_io_cycles());
 }
 
 void On_update_tick(double pTime)
