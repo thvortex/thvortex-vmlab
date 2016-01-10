@@ -1,0 +1,4 @@
+This is the source code repository for my [VMLAB](http://www.amctools.com) User Components. The [Project Website](http://sites.google.com/site/thvortex/vmlab) contains detailed descriptions of each component. You can also [Download Components](http://code.google.com/p/thvortex-vmlab/downloads/list?q=label:Type-Binary) as pre-compiled DLL files from this site. The "AVR Peripheral" components should be installed to the "mculib" directory; all other components are installed in the "userlib" directory. A few components include a "readme.txt" with additional setup instructions.
+
+Most components are licensed under the LGPLv2 (or higher). A few of the older components
+are released into the Public Domain.
